@@ -1,0 +1,13 @@
+<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+  <rect width="32" height="32" rx="7" fill="#140f0b"/>
+  <defs>
+    <mask id="seam">
+      <rect width="32" height="32" fill="white"/>
+      <path d="M16 8 C 12.9 12.4, 19.1 19.6, 16 24" stroke="black" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+    </mask>
+  </defs>
+  <g transform="rotate(-18 16 16)">
+    <ellipse cx="16" cy="16" rx="6.6" ry="9.2" fill="#a06a43" mask="url(#seam)"/>
+  </g>
+  <path d="M24.5 4.5 l0.8 2.3 l2.3 0.8 l-2.3 0.8 l-0.8 2.3 l-0.8 -2.3 l-2.3 -0.8 l2.3 -0.8 Z" fill="#e2893f"/>
+</svg>

@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Next.js build output
+.next/
+out/
+
+# Environment files — never commit secrets (.env.example is the template)
+.env
+.env.local
+.env*.local
+.env.development
+.env.production
+
+# Vercel
+.vercel
+
+# TypeScript build cache
+*.tsbuildinfo
+next-env.d.ts
+
+# Test artifacts
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / IDE
+.vscode/
+.idea/
+
+# Claude Code local settings (may contain machine-specific paths)
+.claude/settings.local.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.swp
