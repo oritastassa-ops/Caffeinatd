@@ -2,18 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ActionReceipt, AssistantResponse, CommunicationStyle, Workspace } from "@/lib/types";
+import { CommunicationStyle, Workspace } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { LogoMark } from "./logo";
-import { Brewing } from "./brewing";
 import { PixelAvatar } from "./avatars/pixel-avatar";
 import { DEFAULT_PERSONALITY, PERSONALITIES } from "@/lib/personalities";
 import { SearchResult, universalSearch } from "@/app/(app)/search-actions";
 import { addCapture } from "@/app/(app)/capture-actions";
 import { createNote } from "@/app/(app)/notes/actions";
+import { askAssistant, useAssistant, isBusy } from "./assistant/store";
 
-type Status = "idle" | "busy" | "done" | "error";
-type ConfirmState = "pending" | "remembered" | "declined";
 type Mode = "command" | "ask";
 
 /** Fired by quick actions / the persistent trigger to open the bar in ask mode (optionally pre-filled). */
@@ -77,13 +75,14 @@ function pushRecent(cmd: string) {
 }
 
 /**
- * The ⌘K surface, now a full command palette with two modes:
+ * The ⌘K surface, a full command palette with two modes:
  *
  * - "command" (default on ⌘K): keyboard-first navigation, actions, and
  *   universal search across tasks, notes, workspaces, memories, conversations.
- * - "ask": the natural-language assistant — unchanged pipeline, receipts,
- *   undo, and memory confirmation. Entered via Tab, the Ask row, or any
- *   OPEN_COMMAND_BAR_EVENT (quick actions pre-fill prompts).
+ * - "ask": natural-language input for the assistant. Submitting hands the
+ *   request to the assistant store and CLOSES the palette — the floating
+ *   companion performs the request and delivers the answer, so the app is
+ *   never blocked on the model.
  */
 export function CommandBar({
   personality = DEFAULT_PERSONALITY,
@@ -95,17 +94,14 @@ export function CommandBar({
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("command");
   const [input, setInput] = useState("");
-  const [status, setStatus] = useState<Status>("idle");
-  const [response, setResponse] = useState<AssistantResponse | null>(null);
-  const [error, setError] = useState("");
-  const [undone, setUndone] = useState<Set<number>>(new Set());
-  const [confirmStates, setConfirmStates] = useState<Record<number, ConfirmState>>({});
+  const [notice, setNotice] = useState("");
   const [recent, setRecent] = useState<string[]>([]);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+  const assistant = useAssistant();
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -134,17 +130,11 @@ export function CommandBar({
       setRecent(readRecent());
       inputRef.current?.focus();
     } else {
-      if (status === "done" && response?.actions.length) router.refresh();
       setInput("");
-      setStatus("idle");
-      setResponse(null);
-      setError("");
-      setUndone(new Set());
-      setConfirmStates({});
+      setNotice("");
       setResults([]);
       setSelected(0);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // Universal search: debounced, command mode only. Stale responses are
@@ -165,35 +155,19 @@ export function CommandBar({
 
   const close = useCallback(() => setOpen(false), []);
 
+  /** Hand the prompt to the companion and get out of the way. */
   const submit = useCallback(
-    async (override?: string) => {
+    (override?: string) => {
       const message = (override ?? input).trim();
-      if (!message || status === "busy") return;
-      setMode("ask");
-      setStatus("busy");
-      setError("");
-      setResponse(null);
-      try {
-        const res = await fetch("/api/assistant", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Something went wrong");
-        setResponse(data as AssistantResponse);
-        setStatus("done");
-        setInput("");
-        pushRecent(message);
-        // Refresh the page behind the bar right away, so the result is already
-        // visible when the user closes it — not only after closing.
-        if ((data as AssistantResponse).actions.length > 0) router.refresh();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Something went wrong");
-        setStatus("error");
+      if (!message) return;
+      if (!askAssistant(message)) {
+        setNotice(`${PERSONALITIES[personality].name} is still working on the last request ☕`);
+        return;
       }
+      pushRecent(message);
+      close();
     },
-    [input, status, router],
+    [input, personality, close],
   );
 
   // ── Command-mode item list ────────────────────────────────────────────────
@@ -317,11 +291,9 @@ export function CommandBar({
     if (mode === "ask") {
       if (e.key === "Enter") submit();
       // Empty backspace walks back out to the palette.
-      if (e.key === "Backspace" && input === "" && status !== "busy") {
+      if (e.key === "Backspace" && input === "") {
         setMode("command");
-        setStatus("idle");
-        setResponse(null);
-        setError("");
+        setNotice("");
       }
       return;
     }
@@ -346,31 +318,8 @@ export function CommandBar({
     if (!fill.endsWith(" ")) submit(fill);
   }
 
-  async function undo(action: ActionReceipt, index: number) {
-    if (!action.undo || undone.has(index)) return;
-    const res = await fetch("/api/assistant/undo", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(action.undo),
-    });
-    if (res.ok) setUndone((s) => new Set(s).add(index));
-  }
-
-  async function remember(action: ActionReceipt, index: number) {
-    if (!action.confirm) return;
-    const res = await fetch("/api/assistant/confirm-memory", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(action.confirm),
-    });
-    setConfirmStates((s) => ({ ...s, [index]: res.ok ? "remembered" : "pending" }));
-  }
-
-  function decline(index: number) {
-    setConfirmStates((s) => ({ ...s, [index]: "declined" }));
-  }
-
-  const showSuggestions = mode === "ask" && status === "idle" && !error && input.trim().length === 0;
+  const showSuggestions = mode === "ask" && input.trim().length === 0;
+  const busy = isBusy();
 
   // Group consecutive items by section for headed rendering.
   const sections = useMemo(() => {
@@ -383,105 +332,100 @@ export function CommandBar({
     return out;
   }, [items]);
 
+  if (!open) return null;
+
   return (
-    <>
-      {/* Mobile floating trigger */}
-      <button
-        onClick={() => {
-          setMode("command");
-          setOpen(true);
-        }}
-        aria-label="Open assistant"
-        className="fixed bottom-16 right-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-accent shadow-lg md:hidden"
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-[14vh] backdrop-blur-sm"
+      onClick={() => setOpen(false)}
+    >
+      <div
+        role="dialog"
+        aria-label={mode === "ask" ? "Assistant" : "Command palette"}
+        className="overlay-enter w-full max-w-xl overflow-hidden rounded-2xl border bg-surface shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
       >
-        <LogoMark className="h-6 w-6 text-white" uid="mobile-fab" />
-      </button>
+        <div className="flex items-center gap-3 border-b px-4 py-3">
+          {mode === "ask" ? (
+            <PixelAvatar
+              personality={personality}
+              size={28}
+              mode={busy ? "thinking" : "idle"}
+            />
+          ) : (
+            <span aria-hidden className="flex h-7 w-7 items-center justify-center text-text-dim">
+              ⌘
+            </span>
+          )}
+          <input
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onInputKeyDown}
+            placeholder={
+              mode === "ask"
+                ? `Ask ${PERSONALITIES[personality].name} anything…`
+                : "Search, jump, or act… (Tab to ask AI)"
+            }
+            aria-label={mode === "ask" ? "Ask the assistant" : "Search commands"}
+            role={mode === "command" ? "combobox" : undefined}
+            aria-expanded={mode === "command" ? true : undefined}
+            className="flex-1 bg-transparent text-[15px] outline-none placeholder:text-text-dim"
+          />
+          <kbd className="rounded border bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-dim">esc</kbd>
+        </div>
 
-      {open && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-[14vh] backdrop-blur-sm"
-          onClick={() => setOpen(false)}
-        >
-          <div
-            role="dialog"
-            aria-label={mode === "ask" ? "Assistant" : "Command palette"}
-            className="overlay-enter w-full max-w-xl overflow-hidden rounded-2xl border bg-surface shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-3 border-b px-4 py-3">
-              {mode === "ask" ? (
-                <PixelAvatar
-                  personality={personality}
-                  size={28}
-                  mode={status === "busy" ? "thinking" : "idle"}
-                />
-              ) : (
-                <span aria-hidden className="flex h-7 w-7 items-center justify-center text-text-dim">
-                  ⌘
-                </span>
-              )}
-              <input
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={onInputKeyDown}
-                placeholder={
-                  mode === "ask"
-                    ? `Ask ${PERSONALITIES[personality].name} anything…`
-                    : "Search, jump, or act… (Tab to ask AI)"
-                }
-                aria-label={mode === "ask" ? "Ask the assistant" : "Search commands"}
-                role={mode === "command" ? "combobox" : undefined}
-                aria-expanded={mode === "command" ? true : undefined}
-                className="flex-1 bg-transparent text-[15px] outline-none placeholder:text-text-dim"
-                disabled={status === "busy"}
-              />
-              <kbd className="rounded border bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-dim">esc</kbd>
-            </div>
-
-            {/* ── Command mode: sectioned, keyboard-driven list ─────────── */}
-            {mode === "command" && (
-              <div ref={listRef} className="max-h-[46vh] overflow-y-auto px-2 py-2" role="listbox">
-                {sections.map((section) => (
-                  <div key={section.name}>
-                    <p className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-dim">
-                      {section.name}
-                    </p>
-                    {section.items.map(({ item, index }) => (
-                      <button
-                        key={item.key}
-                        data-index={index}
-                        role="option"
-                        aria-selected={index === selected}
-                        onClick={item.run}
-                        onMouseMove={() => setSelected(index)}
-                        className={cn(
-                          "flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left text-sm",
-                          index === selected ? "bg-accent-soft text-accent" : "text-text",
-                        )}
-                      >
-                        <span aria-hidden className="w-4 shrink-0 text-center text-text-dim">
-                          {item.icon}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate">{item.title}</span>
-                        {item.sub && (
-                          <span className="max-w-[40%] shrink-0 truncate text-xs text-text-dim">{item.sub}</span>
-                        )}
-                        {index === selected && (
-                          <kbd aria-hidden className="rounded border bg-surface-2 px-1 text-[10px] text-text-dim">
-                            ↵
-                          </kbd>
-                        )}
-                      </button>
-                    ))}
-                  </div>
+        {/* ── Command mode: sectioned, keyboard-driven list ─────────── */}
+        {mode === "command" && (
+          <div ref={listRef} className="max-h-[46vh] overflow-y-auto px-2 py-2" role="listbox">
+            {sections.map((section) => (
+              <div key={section.name}>
+                <p className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-dim">
+                  {section.name}
+                </p>
+                {section.items.map(({ item, index }) => (
+                  <button
+                    key={item.key}
+                    data-index={index}
+                    role="option"
+                    aria-selected={index === selected}
+                    onClick={item.run}
+                    onMouseMove={() => setSelected(index)}
+                    className={cn(
+                      "flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left text-sm",
+                      index === selected ? "bg-accent-soft text-accent" : "text-text",
+                    )}
+                  >
+                    <span aria-hidden className="w-4 shrink-0 text-center text-text-dim">
+                      {item.icon}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                    {item.sub && (
+                      <span className="max-w-[40%] shrink-0 truncate text-xs text-text-dim">{item.sub}</span>
+                    )}
+                    {index === selected && (
+                      <kbd aria-hidden className="rounded border bg-surface-2 px-1 text-[10px] text-text-dim">
+                        ↵
+                      </kbd>
+                    )}
+                  </button>
                 ))}
               </div>
-            )}
+            ))}
+          </div>
+        )}
 
-            {/* ── Ask mode: suggestions, then the response thread ───────── */}
+        {/* ── Ask mode: suggestions; submission hands off to the companion ── */}
+        {mode === "ask" && (
+          <div className="px-4 py-3">
+            {notice && <p className="dropdown-enter mb-2 text-sm text-text-dim">{notice}</p>}
+            {busy && !notice && (
+              <p className="mb-2 text-sm text-text-dim">
+                {PERSONALITIES[personality].name} is working — the answer will appear at your desk ☕
+              </p>
+            )}
             {showSuggestions && (
-              <div className="dropdown-enter px-4 py-3">
+              <div className="dropdown-enter">
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-dim">Try</p>
                 <div className="flex flex-wrap gap-2">
                   {SUGGESTIONS.map((s) => (
@@ -512,87 +456,10 @@ export function CommandBar({
                 )}
               </div>
             )}
-
-            {mode === "ask" && (status === "busy" || status === "done" || error) && (
-              <div className="px-4 py-3">
-                {status === "busy" && (
-                  <Brewing label={`${PERSONALITIES[personality].name} is thinking…`} />
-                )}
-                {error && <p className="text-sm text-bad">{error}</p>}
-                {response && (
-                  <>
-                    <div className="flex items-start gap-3">
-                      <PixelAvatar personality={personality} size={32} mode="idle" className="mt-0.5" />
-                      <p className="min-w-0 flex-1 text-sm leading-relaxed">{response.text}</p>
-                    </div>
-                    {response.actions.length > 0 && (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {response.actions.map((a, i) =>
-                          a.confirm ? (
-                            <span
-                              key={i}
-                              className={cn(
-                                "transition-fast inline-flex items-center gap-2 rounded-lg border bg-surface-2 px-2.5 py-1 text-xs",
-                                confirmStates[i] === "declined" && "line-through opacity-50",
-                              )}
-                            >
-                              <span className="text-accent">?</span>
-                              {a.label}
-                              {(!confirmStates[i] || confirmStates[i] === "pending") && (
-                                <>
-                                  <button onClick={() => remember(a, i)} className="font-medium text-accent hover:underline">
-                                    Remember
-                                  </button>
-                                  <button onClick={() => decline(i)} className="text-text-dim hover:underline">
-                                    Don&apos;t remember
-                                  </button>
-                                </>
-                              )}
-                              {confirmStates[i] === "remembered" && <span className="text-good">✓ Remembered</span>}
-                            </span>
-                          ) : (
-                            <span
-                              key={i}
-                              className={cn(
-                                "transition-fast inline-flex items-center gap-2 rounded-lg border bg-surface-2 px-2.5 py-1 text-xs",
-                                undone.has(i) && "line-through opacity-50",
-                              )}
-                            >
-                              <span className="text-good">✓</span>
-                              {a.label}
-                              {a.undo && !undone.has(i) && (
-                                <button onClick={() => undo(a, i)} className="font-medium text-accent hover:underline">
-                                  Undo
-                                </button>
-                              )}
-                            </span>
-                          ),
-                        )}
-                      </div>
-                    )}
-                    {(response.failures?.length ?? 0) > 0 && (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {response.failures!.map((f, i) => (
-                          <span
-                            key={i}
-                            className="inline-flex items-center gap-2 rounded-lg border border-bad/40 bg-bad/10 px-2.5 py-1 text-xs text-bad"
-                          >
-                            <span aria-hidden>⚠</span>
-                            <span className="min-w-0">
-                              <span className="font-medium">{f.tool.replace(/_/g, " ")}</span> failed — {f.message}
-                            </span>
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
           </div>
-        </div>
-      )}
-    </>
+        )}
+      </div>
+    </div>
   );
 }
 

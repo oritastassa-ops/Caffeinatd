@@ -62,7 +62,8 @@ export function EmptyState({
   return (
     <div className="flex flex-col items-center gap-2 py-10 text-center">
       {character ? (
-        <PixelAvatar personality={character} size={48} mode="idle" />
+        // Nothing to do here, so the host character naps beside the hint.
+        <PixelAvatar personality={character} size={48} mode="sleeping" />
       ) : (
         <svg viewBox="0 0 32 32" className="h-7 w-7 text-bean" fill="none" aria-hidden>
           <path className="steam" d="M12 8 C 10 6, 14 5, 12 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />

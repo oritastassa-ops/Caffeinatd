@@ -41,6 +41,19 @@ fixtures.
 `Timeline`, `WorkspaceCard`, `NoteCard`, `QuickCapture`/`CaptureInbox`,
 `ProgressRing`, `FocusSession`, `NoteEditor`.
 
+### Living companion (`components/assistant/`)
+The assistant is now a desk companion, not a modal. A module-level store
+(`store.ts`) owns the request lifecycle — sleeping → waking (0.5s) → brewing
+(coffee ritual) → thinking → responding/error — with a minimum-ceremony delay
+so fast responses don't skip the wake-up. The ⌘K palette *submits* and closes;
+the floating `AssistantCompanion` (bottom-right, above mobile nav) *performs*:
+sleep Z's, steam-energized coffee cup, personality voice lines
+(`config.ts`), charcoal `SpeechBubble` with typing dots, shared
+`ReceiptChips` (undo / remember / failure chips), notification dot when
+minimized. Requests never block navigation. Emotional pixel frames
+(sleep/alert/happy/concerned) are authored as column patches in
+`avatars/pixel-data.ts` and grid-tested.
+
 ## Integration boundaries (built for, not faked)
 
 - **Capture → AI triage**: captures are stored raw; a later pipeline tool can

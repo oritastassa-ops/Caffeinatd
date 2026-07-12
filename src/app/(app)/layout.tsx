@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/supabase/server";
 import { Sidebar } from "@/components/sidebar";
 import { CommandBar, AssistantTrigger } from "@/components/command-bar";
+import { AssistantCompanion } from "@/components/assistant/companion";
 import { DEFAULT_PERSONALITY } from "@/lib/personalities";
 import { CommunicationStyle } from "@/lib/types";
 import { fetchWorkspaces } from "@/lib/workspaces/data";
@@ -37,6 +38,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         {children}
       </main>
       <CommandBar personality={personality} workspaces={workspaces} />
+      {/* The desk companion — asleep in the corner until asked. */}
+      <AssistantCompanion personality={personality} />
     </div>
   );
 }
