@@ -10,6 +10,7 @@ const NAV = [
   { href: "/", label: "Today", icon: "◈" },
   { href: "/home", label: "Home", icon: "⌂" },
   { href: "/tasks", label: "Tasks", icon: "☑" },
+  { href: "/notes", label: "Notes", icon: "✎" },
   { href: "/calendar", label: "Calendar", icon: "▦" },
   { href: "/fitness", label: "Fitness", icon: "⚡" },
   { href: "/nutrition", label: "Nutrition", icon: "◐" },
