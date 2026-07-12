@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
       const wait = err.retryAfterMs ? Math.ceil(err.retryAfterMs / 1000) : 30;
       return NextResponse.json(
         {
-          error: `Gemini's free-tier rate limit was hit — wait about ${wait}s before trying again. This is quota, not a bug; it resets automatically.`,
+          error: `The AI provider's rate limit was hit — wait about ${wait}s before trying again. This is quota, not a bug; it resets automatically.`,
         },
         { status: 429 },
       );
