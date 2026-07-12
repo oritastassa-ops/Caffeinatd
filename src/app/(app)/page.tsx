@@ -4,10 +4,15 @@ import { requireUser } from "@/lib/supabase/server";
 import { loadProfile } from "@/lib/pipeline/run";
 import { getAccessToken } from "@/lib/google/oauth";
 import { listEvents } from "@/lib/google/calendar";
-import { endOfDayISO, formatTime, localDateStr, startOfDayISO } from "@/lib/utils";
-import { CalendarEvent, DailyPlan, Insight, Reminder, Task } from "@/lib/types";
+import { endOfDayISO, localDateStr, relativeTime, startOfDayISO, zonedTimeToUtc } from "@/lib/utils";
+import { AIConversation, CalendarEvent, Capture, DailyPlan, Insight, Note, Reminder, Task } from "@/lib/types";
 import { Card, CardTitle, EmptyState, PriorityBadge } from "@/components/ui";
 import { QuickActions } from "@/components/quick-actions";
+import { QuickCapture, CaptureInbox } from "@/components/quick-capture";
+import { Timeline, TimelineItem } from "@/components/timeline";
+import { WorkspaceCard } from "@/components/workspace-card";
+import { NoteCard } from "@/components/note-card";
+import { fetchWorkspaces } from "@/lib/workspaces/data";
 import { ReadinessCard } from "@/components/readiness-card";
 import { InsightsCard } from "@/components/insights-card";
 import { RemindersStrip } from "@/components/reminders-strip";
@@ -98,7 +103,62 @@ export default async function TodayPage() {
     fetchSetRows(supabase, user.id),
   ]);
 
+  // ── Workspace-era context: notes, captures, conversations, deadlines ────
+  const in7days = new Date(Date.now() + 7 * 86400_000).toISOString();
+  const [{ data: noteRows }, { data: captureRows }, { data: conversationRows }, { data: deadlineRows }, { data: wsTaskRows }, workspaces] =
+    await Promise.all([
+      supabase.from("notes").select("*").order("updated_at", { ascending: false }).limit(3),
+      supabase
+        .from("captures")
+        .select("*")
+        .eq("status", "inbox")
+        .order("created_at", { ascending: false })
+        .limit(5),
+      supabase
+        .from("ai_conversations")
+        .select("id, title, updated_at, workspace_id, created_at, messages")
+        .order("updated_at", { ascending: false })
+        .limit(3),
+      supabase
+        .from("tasks")
+        .select("*")
+        .is("completed_at", null)
+        .not("due_at", "is", null)
+        .lte("due_at", in7days)
+        .order("due_at")
+        .limit(6),
+      supabase.from("tasks").select("workspace_id").is("completed_at", null).not("workspace_id", "is", null),
+      fetchWorkspaces(supabase, user.id),
+    ]);
+  const recentNotes = (noteRows ?? []) as Note[];
+  const captures = (captureRows ?? []) as Capture[];
+  const conversations = (conversationRows ?? []) as AIConversation[];
+  const deadlines = (deadlineRows ?? []) as Task[];
+  const openByWorkspace = new Map<string, number>();
+  for (const row of wsTaskRows ?? []) {
+    const id = row.workspace_id as string;
+    openByWorkspace.set(id, (openByWorkspace.get(id) ?? 0) + 1);
+  }
+
   const plan = planRow?.plan as DailyPlan | undefined;
+
+  // The day as one thread: calendar events + plan-placed blocks, interleaved.
+  const timelineItems: TimelineItem[] = [
+    ...events.map((e) => ({
+      start: e.start,
+      end: e.end,
+      title: e.summary,
+      kind: "event" as const,
+      sub: e.isPrimary ? undefined : e.calendarSummary,
+      allDay: e.allDay,
+    })),
+    ...(plan?.schedule ?? []).map((b) => ({
+      start: zonedTimeToUtc(today, b.start, tz).toISOString(),
+      end: zonedTimeToUtc(today, b.end, tz).toISOString(),
+      title: b.title,
+      kind: "block" as const,
+    })),
+  ];
   const totals = (meals ?? []).reduce(
     (acc, m) => ({
       kcal: acc.kcal + (m.calories ?? 0),
@@ -189,6 +249,12 @@ export default async function TodayPage() {
       </Card>
 
       <RemindersStrip reminders={(reminderRows as Reminder[] | null) ?? []} tz={tz} />
+
+      {/* ── Quick capture: one line in, triage inline ────────────────────── */}
+      <div className="flex flex-col gap-2">
+        <QuickCapture />
+        <CaptureInbox captures={captures} />
+      </div>
 
       {/* Collections due tonight/today ride the top of the dashboard */}
       {homeCollections.length > 0 && (
@@ -282,30 +348,16 @@ export default async function TodayPage() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
-          <CardTitle>Agenda</CardTitle>
-          {!accessToken ? (
+          <CardTitle>Today&apos;s timeline</CardTitle>
+          {!accessToken && timelineItems.length === 0 ? (
             <p className="text-sm text-text-dim">
               <Link href="/settings" className="text-accent hover:underline">
                 Connect Google Calendar
               </Link>{" "}
               to see your day here.
             </p>
-          ) : events.length === 0 ? (
-            <p className="text-sm text-text-dim">Nothing on the calendar today.</p>
           ) : (
-            <ul className="flex flex-col gap-2.5">
-              {events.map((e) => (
-                <li key={`${e.calendarId}:${e.id}`} className="flex gap-3 text-sm">
-                  <span className="tabular w-24 shrink-0 text-text-dim">
-                    {e.allDay ? "All day" : formatTime(e.start, tz)}
-                  </span>
-                  <span>
-                    {e.summary}
-                    {!e.isPrimary && <span className="text-text-dim"> · {e.calendarSummary}</span>}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <Timeline items={timelineItems} tz={tz} />
           )}
         </Card>
 
@@ -328,6 +380,84 @@ export default async function TodayPage() {
           )}
         </Card>
       </div>
+
+      {/* ── Deadlines + quick notes ──────────────────────────────────────── */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardTitle>Upcoming deadlines</CardTitle>
+          {deadlines.length === 0 ? (
+            <p className="text-sm text-text-dim">Nothing due in the next 7 days.</p>
+          ) : (
+            <ul className="flex flex-col gap-2.5">
+              {deadlines.map((t) => {
+                const overdue = t.due_at! < new Date().toISOString();
+                return (
+                  <li key={t.id} className="flex items-center gap-2 text-sm">
+                    <span
+                      aria-hidden
+                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${overdue ? "bg-bad" : "bg-accent"}`}
+                    />
+                    <Link href="/tasks" className="min-w-0 flex-1 truncate hover:underline">
+                      {t.title}
+                    </Link>
+                    <span className={`tabular shrink-0 text-xs ${overdue ? "font-medium text-bad" : "text-text-dim"}`}>
+                      {overdue ? "overdue" : t.due_at!.slice(5, 10)}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Card>
+
+        <Card>
+          <div className="flex items-baseline justify-between">
+            <CardTitle>Quick notes</CardTitle>
+            <Link href="/notes" className="text-xs text-accent hover:underline">
+              All notes →
+            </Link>
+          </div>
+          {recentNotes.length === 0 ? (
+            <p className="text-sm text-text-dim">
+              No notes yet — <Link href="/notes" className="text-accent hover:underline">start one</Link> or capture above.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {recentNotes.map((n) => (
+                <NoteCard key={n.id} note={n} />
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* ── Workspaces ───────────────────────────────────────────────────── */}
+      {workspaces.length > 0 && (
+        <div>
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-dim">Workspaces</h2>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {workspaces.map((w) => (
+              <WorkspaceCard key={w.id} workspace={w} openTasks={openByWorkspace.get(w.id) ?? 0} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Recent AI conversations (populated once exchanges persist) ───── */}
+      {conversations.length > 0 && (
+        <Card>
+          <CardTitle>Recent conversations</CardTitle>
+          <ul className="flex flex-col gap-2.5">
+            {conversations.map((c) => (
+              <li key={c.id} className="flex items-center gap-2 text-sm">
+                <span aria-hidden className="text-accent">✦</span>
+                <span className="min-w-0 flex-1 truncate">{c.title}</span>
+                <span className="tabular shrink-0 text-xs text-text-dim">{relativeTime(c.updated_at)}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       <Card>
         <CardTitle>Nutrition today</CardTitle>
