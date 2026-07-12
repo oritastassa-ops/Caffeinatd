@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/supabase/server";
 import { getProvider } from "@/lib/ai";
 import { ProviderError } from "@/lib/ai/types";
 import { loadProfile, runAssistant } from "@/lib/pipeline/run";
+import { recordExchange } from "@/lib/conversations";
 
 // Room to ride out one Gemini free-tier rate-limit wait (see withRetry).
 export const maxDuration = 60;
@@ -31,6 +33,10 @@ export async function POST(req: NextRequest) {
       profile,
       parsed.data.message,
     );
+    // Persisting the exchange (for Recent Conversations + search) shouldn't
+    // hold up the reply — it runs after the response is sent.
+    const { supabase, user } = userCtx;
+    after(() => recordExchange(supabase, user.id, parsed.data.message, response.text));
     return NextResponse.json(response);
   } catch (err) {
     if (err instanceof ProviderError && err.status === 429) {
