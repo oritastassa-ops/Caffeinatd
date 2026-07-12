@@ -43,10 +43,64 @@ export interface Task {
   priority: 1 | 2 | 3 | 4;
   category: string | null;
   project: string | null;
+  workspace_id: string | null;
   due_at: string | null;
   recurrence: string | null;
   completed_at: string | null;
   created_at: string;
+}
+
+/* ── Workspaces pillar ──────────────────────────────────────────────────── */
+
+export const WORKSPACE_KINDS = [
+  "development", "university", "premed", "research", "personal", "fitness", "custom",
+] as const;
+export type WorkspaceKind = (typeof WORKSPACE_KINDS)[number];
+
+export interface Workspace {
+  id: string;
+  slug: string;
+  name: string;
+  kind: WorkspaceKind;
+  icon: string;
+  description: string | null;
+  sort_order: number;
+  archived_at: string | null;
+  created_at: string;
+}
+
+export interface Note {
+  id: string;
+  workspace_id: string | null;
+  title: string;
+  content: string;
+  pinned: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Capture {
+  id: string;
+  workspace_id: string | null;
+  content: string;
+  status: "inbox" | "processed" | "dismissed";
+  processed_at: string | null;
+  created_at: string;
+}
+
+export interface ConversationMessage {
+  role: "user" | "assistant";
+  content: string;
+  at: string;
+}
+
+export interface AIConversation {
+  id: string;
+  workspace_id: string | null;
+  title: string;
+  messages: ConversationMessage[];
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Workout {
