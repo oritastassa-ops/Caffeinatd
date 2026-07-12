@@ -104,10 +104,13 @@ export function askAssistant(message: string): boolean {
     let response: AssistantResponse | null = null;
     let error: string | null = null;
     try {
+      // Backstop above the server's own budget: the companion must never
+      // sit in "thinking" forever if the connection wedges.
       const res = await fetch("/api/assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message }),
+        signal: AbortSignal.timeout(90_000),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Something went wrong");

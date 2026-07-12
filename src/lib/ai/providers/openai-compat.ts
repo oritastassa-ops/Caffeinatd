@@ -26,7 +26,10 @@ export class OpenAICompatProvider implements AIProvider {
       model: this.model,
       messages,
       temperature: req.temperature ?? 0.4,
-      max_tokens: req.maxTokens ?? 2048,
+      // Assistant replies are 1–3 sentences and tool args are small JSON —
+      // a tight cap keeps slow hosted models (~30 tok/s) from rambling for
+      // a minute per call. Callers needing more (plan JSON) pass maxTokens.
+      max_tokens: req.maxTokens ?? 1024,
     };
     if (req.tools?.length) {
       body.tools = req.tools.map((t) => ({
@@ -43,6 +46,13 @@ export class OpenAICompatProvider implements AIProvider {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify(body),
+        // A hung upstream must fail fast, not freeze the whole pipeline.
+        signal: AbortSignal.timeout(45_000),
+      }).catch((err) => {
+        if (err instanceof DOMException && err.name === "TimeoutError") {
+          throw new ProviderError(`${this.name} timed out after 45s`, 408, false);
+        }
+        throw err;
       });
       if (!res.ok) {
         throw new ProviderError(

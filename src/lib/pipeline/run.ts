@@ -7,6 +7,14 @@ import { getToolDefs } from "./tools";
 import { executeToolCall } from "./executor";
 
 const MAX_HOPS = 5;
+/**
+ * Wall-clock budget for the reason/act loop. Once spent, the next model call
+ * is forced to answer (no tools) instead of exploring further — the user gets
+ * a fast reply built on whatever already happened, never a 10-minute think.
+ */
+const TIME_BUDGET_MS = 45_000;
+/** Output cap for reasoning hops: replies are 1–3 sentences, tool args are small JSON. */
+const HOP_MAX_TOKENS = 700;
 
 /**
  * The full NL pipeline for one user message:
@@ -66,8 +74,21 @@ export async function runAssistant(
   // write can never masquerade as success.
   const failures: ActionFailure[] = [];
 
+  const startedAt = Date.now();
+  // Some models (notably Llama) re-issue a tool call they already made
+  // instead of answering. Executing it again is pure latency (and can
+  // duplicate writes) — replay the cached result with a nudge instead.
+  const executed = new Map<string, string>();
+
   for (let hop = 0; hop < MAX_HOPS; hop++) {
-    const res = await provider.chat({ messages, tools });
+    const lastHop = hop === MAX_HOPS - 1 || Date.now() - startedAt > TIME_BUDGET_MS;
+
+    // Final hop gets no tools: the model MUST answer in text now.
+    const res = await provider.chat({
+      messages,
+      tools: lastHop ? undefined : tools,
+      maxTokens: HOP_MAX_TOKENS,
+    });
 
     if (res.toolCalls.length === 0) {
       return { text: res.text.trim() || "Done.", actions, failures };
@@ -75,7 +96,19 @@ export async function runAssistant(
 
     messages.push({ role: "assistant", content: res.text, toolCalls: res.toolCalls });
     for (const call of res.toolCalls) {
+      const key = `${call.name}:${JSON.stringify(call.arguments)}`;
+      const cached = executed.get(key);
+      if (cached !== undefined) {
+        messages.push({
+          role: "tool",
+          content: `You already called ${call.name} with these arguments. Its result was:\n${cached}\nDo not call it again — answer the user now.`,
+          toolCallId: call.id,
+          name: call.name,
+        });
+        continue;
+      }
       const outcome = await executeToolCall({ supabase, provider, profile }, call);
+      executed.set(key, outcome.result);
       if (outcome.receipt) actions.push(outcome.receipt);
       if (outcome.result.startsWith("Error:")) {
         failures.push({ tool: call.name, message: outcome.result.slice("Error:".length).trim() });

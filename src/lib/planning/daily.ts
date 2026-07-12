@@ -59,48 +59,48 @@ export async function generateDailyPlan(
   const planDate = date ?? localDateStr(tz);
 
   // The workout suggestion in this plan should reflect what actually
-  // happened recently, not a stale Hevy snapshot.
+  // happened recently, not a stale Hevy snapshot. (Must finish before the
+  // workout/set queries below read from those tables.)
   await syncIfStale(supabase, profile.id);
 
-  // ── Gather context ──────────────────────────────────────────────────────
-  const accessToken = await getAccessToken(supabase, profile.id);
+  // ── Gather context — one parallel round trip, not a serial chain ────────
+  const weekAgo = new Date(Date.now() - 7 * 86400_000).toISOString();
+  const [accessToken, { data: tasks }, { data: workouts }, { data: meals }, home, setRows] =
+    await Promise.all([
+      getAccessToken(supabase, profile.id),
+      supabase
+        .from("tasks")
+        .select("title, priority, due_at, category")
+        .is("completed_at", null)
+        .order("priority")
+        .limit(15),
+      supabase
+        .from("workouts")
+        .select("performed_on, kind, title")
+        .gte("performed_on", weekAgo.slice(0, 10))
+        .order("performed_on", { ascending: false }),
+      supabase.from("meals").select("eaten_at, calories, protein_g").gte("eaten_at", weekAgo),
+      fetchHomeData(supabase, profile.id).catch(() => null),
+      fetchSetRows(supabase, profile.id),
+    ]);
+
   let events: CalendarEvent[] = [];
   let tomorrowFirst: { time: string; summary: string } | null = null;
   if (accessToken) {
     const dayStart = startOfDayISO(planDate, tz);
     const nextDate = localDateStr(tz, new Date(new Date(dayStart).getTime() + 36 * 3600_000));
-    events = await listEvents(accessToken, dayStart, endOfDayISO(planDate, tz), profile.id);
-    const tomorrow = await listEvents(
-      accessToken,
-      startOfDayISO(nextDate, tz),
-      endOfDayISO(nextDate, tz),
-      profile.id,
-    );
+    const [todayEvents, tomorrow] = await Promise.all([
+      listEvents(accessToken, dayStart, endOfDayISO(planDate, tz), profile.id),
+      listEvents(accessToken, startOfDayISO(nextDate, tz), endOfDayISO(nextDate, tz), profile.id),
+    ]);
+    events = todayEvents;
     const first = tomorrow.find((e) => !e.allDay);
     if (first) tomorrowFirst = { time: formatTime24(first.start, tz), summary: first.summary };
   }
 
-  const { data: tasks } = await supabase
-    .from("tasks")
-    .select("title, priority, due_at, category")
-    .is("completed_at", null)
-    .order("priority")
-    .limit(15);
-
-  const weekAgo = new Date(Date.now() - 7 * 86400_000).toISOString();
-  const [{ data: workouts }, { data: meals }] = await Promise.all([
-    supabase
-      .from("workouts")
-      .select("performed_on, kind, title")
-      .gte("performed_on", weekAgo.slice(0, 10))
-      .order("performed_on", { ascending: false }),
-    supabase.from("meals").select("eaten_at, calories, protein_g").gte("eaten_at", weekAgo),
-  ]);
-
   const sleep = recommendSleep(tomorrowFirst, profile.settings);
 
   // ── Household context (deterministic; merged into the same plan) ────────
-  const home = await fetchHomeData(supabase, profile.id).catch(() => null);
   let homeContext = "Household: not set up.";
   if (home) {
     const due = home.chores.filter((c) => isDueOn(c, planDate, home.completions));
@@ -122,7 +122,6 @@ export async function generateDailyPlan(
   // Program-aware workout recommendation: the next SESSION in the split, not
   // a bare muscle group. Falls back to recovery-based when no split is set.
   const program = getProgram(profile.settings.trainingProgramId);
-  const setRows = await fetchSetRows(supabase, profile.id);
   const workoutRec = recommendProgramSession(
     program,
     (workouts ?? []).map((w) => ({ performed_on: w.performed_on, title: w.title })),
@@ -158,6 +157,9 @@ export async function generateDailyPlan(
 
   const { text } = await provider.chat({
     temperature: 0.5,
+    // The plan JSON fits comfortably in ~600 tokens; the cap stops a slow
+    // model from padding the response and doubling the wait.
+    maxTokens: 900,
     messages: [
       {
         role: "system",
@@ -192,43 +194,52 @@ export async function generateDailyPlan(
   const createdEvents: string[] = [];
   const createdTasks: string[] = [];
   if (materialize) {
-    // ── Time blocks → real Google Calendar events ────────────────────────
+    // ── Time blocks → real Google Calendar events (created in parallel) ──
     if (accessToken) {
       const nowLocal = new Date().toLocaleTimeString("en-GB", {
         timeZone: tz, hour: "2-digit", minute: "2-digit",
       });
       const existingTitles = new Set(events.map((e) => e.summary.toLowerCase().trim()));
-      for (const block of parsed.schedule) {
-        if (block.end <= block.start) continue;
+      const blocks = parsed.schedule.filter((block) => {
+        if (block.end <= block.start) return false;
         // Skip blocks already behind us (when planning today mid-day) and
         // blocks whose title already exists on today's calendar (re-planning
         // the same day must not duplicate).
-        if (planDate === localDateStr(tz) && block.start < nowLocal) continue;
-        if (existingTitles.has(block.title.toLowerCase().trim())) continue;
-        await createEvent(accessToken, {
-          summary: block.title,
-          startISO: zonedTimeToUtc(planDate, block.start, tz).toISOString(),
-          endISO: zonedTimeToUtc(planDate, block.end, tz).toISOString(),
-          description: "Scheduled by Caffeinatd — daily plan",
-        });
-        createdEvents.push(`${block.start} ${block.title}`);
-      }
+        if (planDate === localDateStr(tz) && block.start < nowLocal) return false;
+        return !existingTitles.has(block.title.toLowerCase().trim());
+      });
+      const settled = await Promise.allSettled(
+        blocks.map((block) =>
+          createEvent(accessToken, {
+            summary: block.title,
+            startISO: zonedTimeToUtc(planDate, block.start, tz).toISOString(),
+            endISO: zonedTimeToUtc(planDate, block.end, tz).toISOString(),
+            description: "Scheduled by Caffeinatd — daily plan",
+          }),
+        ),
+      );
+      settled.forEach((s, i) => {
+        if (s.status === "fulfilled") createdEvents.push(`${blocks[i]!.start} ${blocks[i]!.title}`);
+      });
     }
 
-    // ── Priorities without a matching open task → tasks ──────────────────
+    // ── Priorities without a matching open task → tasks (one batch insert) ─
     const openTitles = (tasks ?? []).map((t) => t.title.toLowerCase().trim());
-    for (const priority of parsed.priorities) {
+    const newPriorities = parsed.priorities.filter((priority) => {
       const p = priority.toLowerCase().trim();
-      const exists = openTitles.some((t) => t.includes(p) || p.includes(t));
-      if (exists) continue;
-      const { error: taskError } = await supabase.from("tasks").insert({
-        user_id: profile.id,
-        title: priority,
-        priority: 2,
-        category: "daily plan",
-        due_at: endOfDayISO(planDate, tz),
-      });
-      if (!taskError) createdTasks.push(priority);
+      return !openTitles.some((t) => t.includes(p) || p.includes(t));
+    });
+    if (newPriorities.length > 0) {
+      const { error: taskError } = await supabase.from("tasks").insert(
+        newPriorities.map((title) => ({
+          user_id: profile.id,
+          title,
+          priority: 2,
+          category: "daily plan",
+          due_at: endOfDayISO(planDate, tz),
+        })),
+      );
+      if (!taskError) createdTasks.push(...newPriorities);
     }
   }
 
