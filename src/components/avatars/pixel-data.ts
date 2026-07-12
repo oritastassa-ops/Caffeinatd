@@ -20,12 +20,31 @@ export interface PixelCharacter {
     base: string[];
     blink: string[];
     action: string[]; // the idle "signature move": sip / jot / fist-pump / sip
+    /** Companion emotional states (see components/assistant/): */
+    sleep: string[]; // eyes closed, mouth relaxed — resting until needed
+    alert: string[]; // wide eyes, raised brows — just woke up
+    happy: string[]; // broad smile — actions landed
+    concerned: string[]; // flat mouth, knit brows — something went wrong
   };
 }
 
 /** Derive a frame from base by replacing whole rows — keeps diffs intentional. */
 function withRows(base: string[], edits: Record<number, string>): string[] {
   return base.map((row, i) => edits[i] ?? row);
+}
+
+/**
+ * Splice `s` into `row` at `col`. Emotional frames edit only the eye/brow/
+ * mouth pixels, so column patches beat retyping 32-char rows (and can't
+ * change a row's width — the grid test would catch it anyway).
+ */
+function patch(row: string, col: number, s: string): string {
+  return row.slice(0, col) + s + row.slice(col + s.length);
+}
+
+/** Apply several column patches to one row. */
+function patches(row: string, edits: [col: number, s: string][]): string {
+  return edits.reduce((r, [col, s]) => patch(r, col, s), row);
 }
 
 /* ── Janet — Supportive ──────────────────────────────────────────────────
@@ -89,6 +108,27 @@ const janet: PixelCharacter = {
       14: "....hhHssssssssssssssssssHhwwww.",
       15: "....hhHsssssssmmmmsssssssHhssss.",
     }),
+    sleep: withRows(janetBase, {
+      11: "....hhHssssssssssssssssssHhh....",
+      12: "....hhHssSSSsssssssSSSsssHhh....",
+      15: patch(janetBase[15]!, 14, "ssss"),
+      16: patch(janetBase[16]!, 15, "mm"),
+    }),
+    alert: withRows(janetBase, {
+      10: patches(janetBase[10]!, [[9, "mmm"], [19, "mmm"]]),
+      11: patches(janetBase[11]!, [[9, "wkw"], [19, "wkw"]]),
+      12: patches(janetBase[12]!, [[9, "wkw"], [19, "wkw"]]),
+      15: patch(janetBase[15]!, 14, "skks"),
+    }),
+    happy: withRows(janetBase, {
+      15: patch(janetBase[15]!, 13, "mmmmmm"),
+      16: patch(janetBase[16]!, 14, "SSSS"),
+    }),
+    concerned: withRows(janetBase, {
+      10: patches(janetBase[10]!, [[10, "mm"], [19, "mm"]]),
+      15: patch(janetBase[15]!, 14, "ssss"),
+      16: patch(janetBase[16]!, 14, "mmmm"),
+    }),
   },
 };
 
@@ -149,6 +189,24 @@ const juan: PixelCharacter = {
       24: "...GGgggggggggwkkwgggggggGGp....",
       25: "...GGgggggggggwwwwgggggggGkwwk..",
       26: "...GGgggggggggwkkwgggggggGkwwk..",
+    }),
+    sleep: withRows(juanBase, {
+      11: "......hsskuuuksssskuuukssh.p....",
+      12: "......hsskkkkksssskkkkkssh......",
+      16: patch(juanBase[16]!, 15, "ss"),
+    }),
+    alert: withRows(juanBase, {
+      11: patches(juanBase[11]!, [[10, "wkw"], [19, "wkw"]]),
+      12: patches(juanBase[12]!, [[10, "wkw"], [19, "wkw"]]),
+      15: patch(juanBase[15]!, 15, "kk"),
+    }),
+    happy: withRows(juanBase, {
+      15: patch(juanBase[15]!, 14, "mmmm"),
+      16: patch(juanBase[16]!, 14, "SSSS"),
+    }),
+    concerned: withRows(juanBase, {
+      15: patch(juanBase[15]!, 15, "ss"),
+      16: patch(juanBase[16]!, 14, "mmmm"),
     }),
   },
 };
@@ -218,6 +276,36 @@ const maggie: PixelCharacter = {
       14: ".......hsssmwwwwwwmsssh.gg......",
       15: ".......hssssmmmmmmssssh.g.......",
     }),
+    sleep: withRows(maggieBase, {
+      11: ".......hssssssssssssssh..h......",
+      12: ".......hssSSSssssSSSssh..h......",
+      14: patch(maggieBase[14]!, 12, "ssssss"),
+    }),
+    alert: withRows(maggieBase, {
+      11: patches(maggieBase[11]!, [[10, "wkw"], [17, "wkw"]]),
+      12: patches(maggieBase[12]!, [[10, "wkw"], [17, "wkw"]]),
+      14: patch(maggieBase[14]!, 12, "ssssss"),
+      15: patch(maggieBase[15]!, 13, "skks"),
+    }),
+    // Success for a coach IS the fist pump — reuse the signature move.
+    happy: withRows(maggieBase, {
+      6: "........oooooooooooooo..hh..ss..",
+      7: "........oOOooooooooooO..hh..ss..",
+      8: "........hssssssssssssh..hh..gg..",
+      9: ".......hssssssssssssssh..h..gg..",
+      10: ".......hssssssssssssssh..h..gg..",
+      11: ".......hsskkwsssskkwssh..h.gg...",
+      12: ".......hsskkksssskkkssh..h.gg...",
+      13: ".......hsrrssssSSssrrsh.gg......",
+      14: ".......hsssmwwwwwwmsssh.gg......",
+      15: ".......hssssmmmmmmssssh.g.......",
+    }),
+    concerned: withRows(maggieBase, {
+      10: patches(maggieBase[10]!, [[10, "kk"], [18, "kk"]]),
+      14: patch(maggieBase[14]!, 12, "ssssss"),
+      15: patch(maggieBase[15]!, 13, "ssss"),
+      16: patch(maggieBase[16]!, 13, "mmmm"),
+    }),
   },
 };
 
@@ -280,6 +368,26 @@ const jimmy: PixelCharacter = {
       14: "......hssssssssssssssssssh.wow..",
       15: "......hssssssssssmmmsssssh.wow..",
       16: "......hssssssssSSssssssssh.www..",
+    }),
+    sleep: withRows(jimmyBase, {
+      11: "......hssssssssssssssssssh......",
+      12: "......hssSSSsssssssSSSsssh......",
+      15: patch(jimmyBase[15]!, 16, "sss"),
+      16: patch(jimmyBase[16]!, 15, "mm"),
+    }),
+    alert: withRows(jimmyBase, {
+      10: patches(jimmyBase[10]!, [[9, "sss"], [19, "sss"]]),
+      11: patches(jimmyBase[11]!, [[9, "wkw"], [19, "wkw"]]),
+      12: patches(jimmyBase[12]!, [[9, "wkw"], [19, "wkw"]]),
+      15: patch(jimmyBase[15]!, 16, "kk"),
+    }),
+    happy: withRows(jimmyBase, {
+      15: patch(jimmyBase[15]!, 14, "mmmmm"),
+      16: patch(jimmyBase[16]!, 14, "SSSS"),
+    }),
+    concerned: withRows(jimmyBase, {
+      15: patch(jimmyBase[15]!, 16, "sss"),
+      16: patch(jimmyBase[16]!, 14, "mmmm"),
     }),
   },
 };

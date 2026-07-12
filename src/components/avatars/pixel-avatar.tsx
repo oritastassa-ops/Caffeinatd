@@ -6,8 +6,15 @@ import { PIXEL_CHARACTERS } from "./pixel-data";
 import { PERSONALITIES } from "@/lib/personalities";
 import { cn } from "@/lib/utils";
 
-type Frame = "base" | "blink" | "action";
-type Mode = "static" | "idle" | "thinking";
+type Frame = "base" | "blink" | "action" | "sleep" | "alert" | "happy" | "concerned";
+export type AvatarMode =
+  | "static"
+  | "idle"
+  | "thinking"
+  | "sleeping"
+  | "alert"
+  | "happy"
+  | "concerned";
 
 /**
  * Renders one cast member as crisp SVG pixel art.
@@ -15,6 +22,9 @@ type Mode = "static" | "idle" | "thinking";
  * - idle: blinks every few seconds, does their signature move occasionally —
  *   staggered per instance so a page of avatars never blinks in unison
  * - thinking: alternates base/action quickly with a subtle bob (while generating)
+ * - sleeping: eyes closed with slow breathing; stirs almost imperceptibly
+ * - alert / happy / concerned: locked emotional frames — the companion
+ *   choreographs how long each is held
  */
 export function PixelAvatar({
   personality,
@@ -24,7 +34,7 @@ export function PixelAvatar({
 }: {
   personality: CommunicationStyle;
   size?: number;
-  mode?: Mode;
+  mode?: AvatarMode;
   className?: string;
 }) {
   const character = PIXEL_CHARACTERS[personality];
@@ -34,8 +44,13 @@ export function PixelAvatar({
   useEffect(() => {
     timers.current.forEach(clearTimeout);
     timers.current = [];
-    setFrame("base");
-    if (mode === "static") return;
+    const locked: Partial<Record<AvatarMode, Frame>> = {
+      alert: "alert",
+      happy: "happy",
+      concerned: "concerned",
+    };
+    setFrame(locked[mode] ?? (mode === "sleeping" ? "sleep" : "base"));
+    if (mode === "static" || locked[mode]) return;
 
     let cancelled = false;
     const schedule = (fn: () => void, ms: number) => {
@@ -43,7 +58,19 @@ export function PixelAvatar({
       timers.current.push(t);
     };
 
-    if (mode === "thinking") {
+    if (mode === "sleeping") {
+      // The occasional stir — lids part for a beat, then back under.
+      const stirLoop = () => {
+        schedule(() => {
+          setFrame("blink");
+          schedule(() => {
+            setFrame("sleep");
+            stirLoop();
+          }, 260);
+        }, 7000 + Math.random() * 5000);
+      };
+      stirLoop();
+    } else if (mode === "thinking") {
       const tick = (on: boolean) => {
         setFrame(on ? "action" : "base");
         schedule(() => tick(!on), 450);
@@ -113,6 +140,8 @@ export function PixelAvatar({
         "shrink-0 select-none",
         mode === "thinking" && "avatar-bob",
         mode === "idle" && "avatar-breathe",
+        mode === "sleeping" && "avatar-breathe-slow",
+        (mode === "alert" || mode === "happy") && "avatar-pop",
         className,
       )}
       style={{ imageRendering: "pixelated", shapeRendering: "crispEdges" }}
