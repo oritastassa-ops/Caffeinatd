@@ -227,6 +227,16 @@ export function CommandBar({
     ];
 
     const actions: PaletteItem[] = [];
+    if (match("focus mode") || match("start focus") || match("deep work")) {
+      actions.push({
+        key: "act:focus",
+        icon: "❂",
+        title: "Start focus mode",
+        sub: "one task, one timer",
+        section: "Actions",
+        run: go("/focus"),
+      });
+    }
     if (match("new note") || match("create note")) {
       actions.push({
         key: "act:new-note",
