@@ -16,8 +16,9 @@ export async function toggleTask(id: string, completed: boolean) {
 export async function addTask(formData: FormData) {
   const title = String(formData.get("title") ?? "").trim();
   if (!title) return;
+  const workspaceId = String(formData.get("workspace_id") ?? "").trim() || null;
   const { supabase, user } = await requireUser();
-  await supabase.from("tasks").insert({ user_id: user.id, title });
+  await supabase.from("tasks").insert({ user_id: user.id, title, workspace_id: workspaceId });
   revalidatePath("/tasks");
 }
 
