@@ -26,6 +26,13 @@ alerts, nutrition trends chart, weekly planning summary, `g`-key navigation.
 Voice input (SpeechRecognition → command bar) → push notifications (web push) → Gmail/email
 triage → Apple Health import → shared/partner assistant mode → budgeting.
 
+**Notification pillar** *(shipped — Phases 1–5, see `docs/14-notifications-architecture.md`)*
+Email (Resend) and SMS (Twilio) delivery with verified opt-in, per-notification channel
+preferences, quiet hours, spend caps, digest batching, reminder dispatch, assistant scheduling
+tools, and a settings/delivery-log surface. This is what "push notifications (web push)" above
+becomes the *next* channel for — the delivery substrate, queue worker, and preference system are
+already channel-agnostic, so web push is one more `NotificationChannel` implementation, not a rebuild.
+
 ## Dependency graph
 
 Schema → auth → provider layer → pipeline → {tasks, fitness, nutrition, memory} (parallel) →

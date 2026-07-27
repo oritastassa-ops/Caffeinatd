@@ -18,6 +18,11 @@ infrastructure, with their own AI provider keys, and full ownership of their dat
   action returns an undoable receipt.
 - **Daily plan** — a cron job assembles each morning's plan (calendar, tasks, sleep
   recommendation, readiness) before you wake up.
+- **Notifications (email + SMS)** — the daily plan, reminders, insights, and finance reviews reach
+  you off-app through a channel-agnostic delivery layer (Resend for email, Twilio for SMS).
+  Verified opt-in, per-notification channel preferences, quiet hours, spend caps, digest batching,
+  and a delivery log with test sends. The assistant can schedule its own reminders ("remind me to
+  call the lab at 4pm tomorrow") and knows which channels it can actually reach you on.
 - **Google Calendar** — full read/write integration via OAuth (create, edit, list, free/busy).
 - **Fitness intelligence** — syncs workouts from [Hevy](https://www.hevyapp.com/), computes
   per-muscle recovery, readiness scores, PR detection, progression trends, and program
@@ -80,8 +85,9 @@ Deeper design docs live in [docs/](docs): [product](docs/01-product.md) ·
 | Styling | Tailwind CSS 4 |
 | AI | Provider-agnostic: Gemini (default), OpenAI, Anthropic, OpenRouter, NVIDIA NIM, Ollama |
 | Integrations | Google Calendar (OAuth2 + REST), Hevy (workout sync) |
+| Notifications | Resend (email), Twilio (SMS) — REST via `fetch`, no SDKs |
 | Validation | Zod (tool contracts + runtime validation) |
-| Testing | Vitest (167 unit tests) |
+| Testing | Vitest (300+ unit tests) |
 | Hosting | Vercel (app + daily cron) |
 
 ## Installation
@@ -93,9 +99,10 @@ and a Google Cloud project for Calendar OAuth.
 
 1. Create a project at [supabase.com](https://supabase.com).
 2. SQL Editor → paste and run `supabase/schema.sql`, then each file in `supabase/migrations/`
-   **in numeric order** (002 → 003 → 004 → 005 → 006 → 006d). Together they add insights,
-   reminders, memory ranking, the Hevy integration, fitness intelligence, and the Finance and
-   Home pillars.
+   **in numeric order** (002 → 003 → 004 → 005 → 006 → 006d → 007 → 008 → 009 → 010). Together they
+   add insights, reminders, memory ranking, the Hevy integration, fitness intelligence, the Finance
+   and Home pillars, workspaces, and the notification pillar (contacts, preferences, delivery queue,
+   SMS, and reminder dispatch).
 3. Authentication → Sign In / Up → **disable new sign-ups**, then invite your users
    (Authentication → Users → Invite).
 4. Copy the project URL, anon key, and service-role key into `.env`.
@@ -115,7 +122,26 @@ create key → `GEMINI_API_KEY`. The free tier is plenty for personal use.
    `http://localhost:3000/api/google/callback` (add the production URL after deploy).
 4. Copy client ID/secret into `.env`.
 
-### 4. Environment & run
+### 4. Notifications (optional — email & SMS)
+
+Off-app delivery is off by default: `NOTIFICATIONS_DRIVER=logging` writes every "send" to the
+server log, so everything works in dev with no vendor account. To deliver for real, set
+`NOTIFICATIONS_DRIVER=live` and configure a channel:
+
+- **Email (Resend):** create a key at [resend.com](https://resend.com), set `RESEND_API_KEY` and
+  `NOTIFICATIONS_FROM_EMAIL`. **Verify your sending domain** (publish the SPF + DKIM DNS records
+  Resend gives you) — mail from an unverified domain lands in spam.
+- **SMS (Twilio):** set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and a sender
+  (`TWILIO_MESSAGING_SERVICE_SID`, preferred, or `TWILIO_FROM_NUMBER`). Point the number/messaging-
+  service webhook at `{APP_URL}/api/notifications/sms/inbound` (delivery receipts + STOP/START).
+  **US A2P traffic needs A2P 10DLC brand + campaign registration before production sending** — it
+  takes *days* to approve, so start it early; toll-free verification is the alternative (also days).
+
+Then finish setup in-app at **Settings → Notifications**: add and verify a contact, choose channels
+per notification, and hit **Send test** to confirm it works end to end. Full design in
+[docs/14-notifications-architecture.md](docs/14-notifications-architecture.md).
+
+### 5. Environment & run
 
 ```bash
 cp .env.example .env   # fill in the values above (see comments in the file)
@@ -193,6 +219,9 @@ docs/                  product & architecture design docs
   `CRON_SECRET` matches the env var.
 - **Hevy sync fails** — the API key is validated on connect; if it later fails, reconnect from
   Settings (keys are stored encrypted and can't be displayed back).
+- **Notifications aren't arriving** — check `NOTIFICATIONS_DRIVER=live`; for email, that the
+  sending domain is verified in Resend (SPF/DKIM); for SMS, that A2P 10DLC/toll-free registration is
+  approved. The **Settings → Notifications** delivery log shows the exact per-message failure.
 
 ## Known limitations
 
@@ -201,13 +230,16 @@ docs/                  product & architecture design docs
 - Calendar writes go to the user's primary Google calendar only.
 - AI responses depend on the configured provider/model; small models may misuse tools more
   often (validation errors are fed back so the model can self-correct).
+- Notification dispatch runs on a 5-minute cron, so a reminder can arrive up to ~5 minutes late;
+  SMS requires carrier registration (A2P 10DLC) that takes days to approve.
 - ESLint is not configured; correctness is covered by TypeScript strict mode and unit tests.
 
 ## Roadmap
 
-Voice input (SpeechRecognition → command bar) → web push notifications → Gmail/email triage →
-Apple Health import → shared/partner assistant mode → budgeting. Details in
-[docs/04-roadmap.md](docs/04-roadmap.md).
+Email and SMS notifications **shipped** (Phases 1–5 of the notification pillar). Next: web push
+(free, no vendor — the natural third channel) → inbound email/SMS replies routed into the assistant
+→ voice input (SpeechRecognition → command bar) → Gmail/email triage → Apple Health import →
+shared/partner assistant mode → budgeting. Details in [docs/04-roadmap.md](docs/04-roadmap.md).
 
 ## License
 

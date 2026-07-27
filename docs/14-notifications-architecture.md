@@ -395,6 +395,42 @@ receipt; A4 — `runAssistant` collects tool failures into `AssistantResponse.fa
 red chips by `ReceiptChips`, so "I texted you" can never mask a send that didn't happen. That honesty
 is the precondition for trusting the whole pillar.
 
+---
+
+# Phase 5: surfaces
+
+Everything above was reachable only through an API call or the database. Phase 5 gives it a face for
+someone who isn't the author: `Settings → Notifications` (contacts, the preference matrix, quiet
+hours / digest / caps, and a real **Test send**), a masked **delivery log** with fix links, and the
+assistant awareness that keeps it honest.
+
+## Logic vs pixels
+
+UI is lightly tested here on purpose; the *logic* under it is not. Three pure modules are unit-tested
+and carry the correctness weight:
+
+- `mask.ts` — a masking bug that prints the full address into a screenshotted log is the failure
+  mode, so `maskEmail`/`maskPhone` are tested to keep only the recognizable parts and degrade to
+  `•••` on malformed input.
+- `matrix.ts` — `deriveCellState` decides whether a (kind, channel) toggle is on, and whether it's
+  *usable* (configured on the server AND a verified contact) or disabled-with-a-reason. The "disabled
+  but explained" behavior is the whole UX bet: a control that teaches beats one that's missing.
+- the test-send rate limit — a pure predicate (`testSendBlocked`) so the endpoint's guard is asserted
+  rather than trusted.
+
+## Test send records to the log
+
+The test endpoint sends synchronously (instant "it works" feedback) *and* writes a
+`notification_deliveries` row, so a test appears in the delivery log like any other send and the two
+surfaces stay consistent. It's rate-limited by counting recent `test:`-keyed rows — no new table.
+
+## The `last_error` contract, verified not assumed
+
+The delivery log renders `last_error` directly. That is only safe because Phases 2–3 guaranteed
+channel `error` fields are always user-safe sentences (raw provider bodies are logged server-side,
+never returned). Phase 5 depends on that contract rather than re-sanitizing; the loader comments say
+so, so the coupling is visible.
+
 ## What breaks first at scale
 
 1. **`notification_deliveries` grows unbounded.** One table for queue + audit means every message
@@ -422,6 +458,13 @@ is the precondition for trusting the whole pillar.
    the first item's resolved tick, not a chosen digest hour. The fix when it matters is a shorter
    cron (or a nearest-due wake-up), not a design change — the queue, lease, and dedupe already
    tolerate it. Called out so "the text was 4 minutes late" is understood, not a surprise.
+0. *Phase 5 shipped the settings surface but deliberately deferred two first-run touches:* the
+   onboarding "how should I reach you?" step and the one-time Today-dashboard nudge for a user with
+   no verified contact. The definition of done — zero → verified email → successful test send *on the
+   settings page* — holds without them, and folding two more surfaces into an already-large settings
+   page was the rush the brief warned against. They're a clean, self-contained follow-up (one file
+   each). Also deferred: the preference matrix saves the whole thing on one button rather than
+   per-cell optimistic writes — simpler and matches the Profile form, at the cost of a less live feel.
 0. *Weakest point of the SMS phase: cap counters race under concurrent sends.* Enqueue reads
    `sent-this-period + in-flight` and decides; two enqueues (or two worker instances) interleaving
    between read and the send-time increment can both pass a cap that only one should. The in-flight

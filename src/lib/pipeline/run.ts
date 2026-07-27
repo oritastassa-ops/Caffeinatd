@@ -2,6 +2,7 @@ import { SupabaseClient } from "@supabase/supabase-js";
 import { AIProvider, ChatMessage } from "@/lib/ai/types";
 import { ActionFailure, ActionReceipt, AssistantResponse, Profile } from "@/lib/types";
 import { recallMemories } from "@/lib/memory";
+import { reachableChannels } from "@/lib/notifications/settings-data";
 import { DEFAULT_PERSONALITY, PERSONALITIES } from "@/lib/personalities";
 import { getToolDefs } from "./tools";
 import { executeToolCall } from "./executor";
@@ -27,6 +28,9 @@ export async function runAssistant(
   userMessage: string,
 ): Promise<AssistantResponse> {
   const memories = await recallMemories(supabase, provider, profile.id, userMessage);
+  // Which channels can actually reach this user right now — so the assistant
+  // stops offering to text someone with no verified number. Best-effort.
+  const reachable = await reachableChannels(supabase, profile.id).catch(() => [] as string[]);
 
   const now = new Date();
   const localNow = now.toLocaleString("en-US", {
@@ -55,6 +59,9 @@ export async function runAssistant(
     `- Money: "I spent X" → log_expense, "I got paid" → log_income. For any money question ("can I afford", "how am I doing", "when can I…", "what if…") call get_finance_report or simulate_finances FIRST and reason from those numbers — never compute money math yourself. Explain the why, not just the answer.`,
     `- Household vs personal: housework and home upkeep ("vacuum every Saturday", "assign laundry to Sarah") → add_chore; personal to-dos ("call mom") → create_task. "We need X" / "we're out of X" → add_shopping_item. For any household question ("when is garbage day", "what housework do I have", "what should we buy") call get_home_report FIRST — never guess collection days or duties.`,
     `- If a tool reports a conflict or error, explain it plainly and propose a next step. NEVER claim an action succeeded unless the tool result confirms it — a tool result starting with "Error:" means that action did NOT happen.`,
+    reachable.length
+      ? `- Notification channels available for ${profile.display_name} right now: ${reachable.join(", ")}. Only offer to email or text when that channel is listed here; schedule_reminder/notify_me default to 'auto' (their preferences decide). If they want a channel that isn't listed, tell them to add and verify it in Settings → Notifications.`
+      : `- ${profile.display_name} has NO verified notification channel yet. Do not offer to email or text them; if they ask to be reminded off-app, tell them to add a contact in Settings → Notifications first (an in-app reminder still works).`,
     `- Final replies: brief (1–3 sentences), no markdown headers, state exactly what was done.`,
     memories.length
       ? `Known about ${profile.display_name} (recalled, relevant to this message):\n${memories.map((m) => `- (${m.kind}) ${m.content}`).join("\n")}`

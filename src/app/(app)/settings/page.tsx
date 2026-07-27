@@ -109,6 +109,21 @@ export default async function SettingsPage({
       </Card>
 
       <Card>
+        <CardTitle>Notifications</CardTitle>
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-text-dim">
+            Manage contacts, choose channels per notification, quiet hours, and send a test message.
+          </p>
+          <Link
+            href="/settings/notifications"
+            className="transition-fast shrink-0 rounded-xl border px-4 py-2 text-sm font-medium hover:border-accent"
+          >
+            Manage
+          </Link>
+        </div>
+      </Card>
+
+      <Card>
         <CardTitle>Google Calendar</CardTitle>
         {calendar && calendar !== "connected" && (
           <p className="mb-3 text-sm text-bad">Connection didn’t complete ({calendar}). Try again.</p>

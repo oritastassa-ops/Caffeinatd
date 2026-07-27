@@ -1,8 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { ActionReceipt, AssistantResponse } from "@/lib/types";
+import Link from "next/link";
+import { ActionFailure, ActionReceipt, AssistantResponse } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+// A failure the user can fix on the notifications settings page (unverified
+// contact, opted-out number, over cap) — the chip links straight to it.
+const NOTIFY_TOOLS = new Set(["schedule_reminder", "notify_me", "cancel_reminder", "list_reminders"]);
+function notificationFix(f: ActionFailure): boolean {
+  if (NOTIFY_TOOLS.has(f.tool)) return true;
+  const m = f.message.toLowerCase();
+  return m.includes("verify") || m.includes("verified contact") || m.includes("opted out") || m.includes("channel");
+}
 
 type ConfirmState = "pending" | "remembered" | "declined";
 
@@ -98,6 +108,14 @@ export function ReceiptChips({ response }: { response: AssistantResponse }) {
               <span aria-hidden>⚠</span>
               <span className="min-w-0">
                 <span className="font-medium">{f.tool.replace(/_/g, " ")}</span> failed — {f.message}
+                {notificationFix(f) && (
+                  <>
+                    {" "}
+                    <Link href="/settings/notifications" className="font-medium underline">
+                      Fix in Settings
+                    </Link>
+                  </>
+                )}
               </span>
             </span>
           ))}
