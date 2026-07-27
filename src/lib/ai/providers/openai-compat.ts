@@ -39,21 +39,7 @@ export class OpenAICompatProvider implements AIProvider {
     }
 
     return withRetry(async () => {
-      const res = await fetch(`${this.baseURL.replace(/\/$/, "")}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify(body),
-        // A hung upstream must fail fast, not freeze the whole pipeline.
-        signal: AbortSignal.timeout(45_000),
-      }).catch((err) => {
-        if (err instanceof DOMException && err.name === "TimeoutError") {
-          throw new ProviderError(`${this.name} timed out after 45s`, 408, false);
-        }
-        throw err;
-      });
+      const res = await this.post(body);
       if (!res.ok) {
         throw new ProviderError(
           `${this.name} ${res.status}: ${await res.text()}`,
@@ -77,6 +63,31 @@ export class OpenAICompatProvider implements AIProvider {
       }));
       return { text: msg?.content ?? "", toolCalls };
     });
+  }
+
+  /**
+   * POST with a hard timeout. Hosted community endpoints (NIM, OpenRouter)
+   * sometimes queue a request indefinitely with zero bytes sent; waiting
+   * longer doesn't help. Failing at 45s lets the FallbackProvider switch to
+   * a healthy provider while the request still feels "slow", not "dead".
+   */
+  private async post(body: Record<string, unknown>): Promise<Response> {
+    try {
+      return await fetch(`${this.baseURL.replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(45_000),
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "TimeoutError") {
+        throw new ProviderError(`${this.name} timed out after 45s`, 408, false);
+      }
+      throw err;
+    }
   }
 
   private toWireMessage(m: ChatMessage): Record<string, unknown> {

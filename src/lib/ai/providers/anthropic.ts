@@ -67,10 +67,10 @@ export class AnthropicProvider implements AIProvider {
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(45_000),
+        signal: AbortSignal.timeout(60_000),
       }).catch((err) => {
         if (err instanceof DOMException && err.name === "TimeoutError") {
-          throw new ProviderError("anthropic timed out after 45s", 408, false);
+          throw new ProviderError("anthropic timed out after 60s", 408, false);
         }
         throw err;
       });

@@ -94,10 +94,10 @@ export class GeminiProvider implements AIProvider {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(45_000),
+        signal: AbortSignal.timeout(60_000),
       }).catch((err) => {
         if (err instanceof DOMException && err.name === "TimeoutError") {
-          throw new ProviderError("gemini timed out after 45s", 408, false);
+          throw new ProviderError("gemini timed out after 60s", 408, false);
         }
         throw err;
       });

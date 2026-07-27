@@ -2,11 +2,14 @@ import { AIProvider } from "./types";
 import { GeminiProvider } from "./providers/gemini";
 import { OpenAICompatProvider } from "./providers/openai-compat";
 import { AnthropicProvider } from "./providers/anthropic";
+import { FallbackProvider } from "./providers/fallback";
 
 export type ProviderName = "gemini" | "openai" | "anthropic" | "openrouter" | "nim" | "ollama";
 
 export interface ProviderEnv {
   AI_PROVIDER?: string;
+  /** When set (and its key is present), requests that fail on the primary re-run here. */
+  AI_FALLBACK_PROVIDER?: string;
   GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
   OPENAI_API_KEY?: string;
@@ -23,14 +26,8 @@ const OPENAI_COMPAT_DEFAULTS: Record<string, { baseURL: string; model: string }>
   ollama: { baseURL: "http://localhost:11434/v1", model: "llama3.1" },
 };
 
-/**
- * Provider factory — the only place that maps AI_PROVIDER to a concrete
- * implementation. OpenRouter, NIM, and Ollama all speak the OpenAI wire
- * format, so they share OpenAICompatProvider with different defaults.
- */
-export function createProvider(env: ProviderEnv = process.env as ProviderEnv): AIProvider {
-  const name = (env.AI_PROVIDER ?? "gemini").toLowerCase();
-
+/** Build one concrete provider by name. */
+function buildProvider(name: string, env: ProviderEnv): AIProvider {
   if (name === "gemini") {
     if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set");
     return new GeminiProvider(env.GEMINI_API_KEY, env.GEMINI_MODEL ?? "gemini-2.0-flash");
@@ -51,6 +48,32 @@ export function createProvider(env: ProviderEnv = process.env as ProviderEnv): A
     );
   }
   throw new Error(`Unknown AI_PROVIDER "${name}"`);
+}
+
+/**
+ * Provider factory — the only place that maps AI_PROVIDER to a concrete
+ * implementation. OpenRouter, NIM, and Ollama all speak the OpenAI wire
+ * format, so they share OpenAICompatProvider with different defaults.
+ * With AI_FALLBACK_PROVIDER set, the primary is wrapped so a failing
+ * request re-runs on the fallback instead of surfacing an error.
+ */
+export function createProvider(env: ProviderEnv = process.env as ProviderEnv): AIProvider {
+  const name = (env.AI_PROVIDER ?? "gemini").toLowerCase();
+  const primary = buildProvider(name, env);
+
+  const fallbackName = env.AI_FALLBACK_PROVIDER?.toLowerCase();
+  if (fallbackName && fallbackName !== name) {
+    try {
+      return new FallbackProvider(primary, buildProvider(fallbackName, env));
+    } catch (err) {
+      // A fallback that can't be built (missing key) shouldn't take the app
+      // down — run on the primary alone, but say why.
+      console.warn(
+        `[ai] AI_FALLBACK_PROVIDER="${fallbackName}" ignored: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+  return primary;
 }
 
 let cached: AIProvider | null = null;
