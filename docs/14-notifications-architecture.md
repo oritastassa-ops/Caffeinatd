@@ -315,6 +315,86 @@ takes days to approve, and unregistered traffic is carrier-filtered. Toll-free n
 alternative but still need toll-free verification (also days). Documented in `.env.example` so it's
 planned for, not discovered at launch.
 
+---
+
+# Phase 4: scheduling, dispatch, and assistant tools
+
+Phases 1–3 built the substrate and channels; Phase 4 connects everything that already *knows*
+something to the channel that can *say* it, and gives the assistant the vocabulary to schedule its
+own follow-ups. Two halves: deterministic dispatch, and new Zod tools.
+
+## Quiet hours (`schedule.ts`)
+
+`resolveSendTime(desiredAt, prefs, timezone, opts)` is pure and DST-correct — it never adds
+milliseconds to a UTC timestamp; every wall-clock conversion goes through `zonedTimeToUtc`
+(`src/lib/utils`), so 08:00 local resolves right on the 23- and 25-hour days (both tested). A time
+inside quiet hours is pushed to the window's end; midnight-crossing windows (22:00–08:00, the common
+case) are handled explicitly. It iterates, because deferring to one window's end can land inside
+another — an SMS floor ending at 08:00 that falls in a user's 07:00–09:00 window re-defers.
+
+Urgent kinds bypass entirely; the set is defined once (`isUrgentKind`), not per call site. SMS also
+carries a **hard floor** (22:00–08:00) that applies on top of the user's own window as a union — a
+user may widen quiet hours but not remove the floor, because SMS is the one channel that wakes people.
+
+## Reminder dispatch (`reminders.ts`) — one queue drainer, not two
+
+The `reminders` table has existed since migration 002 and was never dispatched. `dispatchDueReminders`
+runs inside the **existing** notifications cron (before `runWorker`), not a second cron — one drainer
+is easier to reason about. It selects due, uncompleted, off-app reminders and calls
+`enqueueNotification` with `dedupeKey: reminder:<id>`. Idempotency is layered: `dispatched_at` stops
+re-scanning handled rows, and the delivery dedupe index backstops it if the mark is lost to a crash
+(both tested). Quiet hours are applied inside enqueue via `resolveSendTime`, per channel.
+
+### `reminders.notification_type` — one meaning, not two sources of truth
+
+The column was `'in_app' | 'email' | 'push'` and dispatched nothing. Rather than leave it fighting the
+Phase 1 preferences system, migration 010 makes it the reminder's **channel intent** with a single
+precedence rule: `'auto'` (the new default for tool-created reminders) delegates entirely to
+preferences; `'email'`/`'sms'` force a channel (an explicit "text me"); `'in_app'` surfaces in-app
+only, no off-app send (legacy rows keep working). Preferences is the default, `notification_type` is
+the per-reminder override — the schedule_reminder tool's `channel` argument has a home without a
+redundant column. `'push'` is dropped (never implemented).
+
+## Pillar hooks (`pillar-hooks.ts`)
+
+Each pillar that computes something worth knowing hands it to the layer, guarded so a notification
+failure never breaks the pillar. `ensureInsights` now returns *only the insights it actually
+inserted* (the `ignoreDuplicates` upsert with `.select()` returns just the non-conflicting rows), so
+re-running the rules never re-notifies — the insight id is a stable dedupe unit, and the delivery
+dedupe key is the second guard. Fitness consistency-break insights route to the `fitness_nudge` kind
+(so a user can mute training nudges without muting all insights); everything else is `insight`.
+`generateWeeklyReview` success enqueues `finance_review`.
+
+## Digest batching — the simple version, deliberately
+
+When a kind's `digest` flag is on, its events for a (user, kind, local-day) coalesce into **one**
+email instead of N. The coalescing is atomic: `append_digest_delivery` (migration 010) does the
+insert-or-append in a single `jsonb ||` statement, so concurrent enqueues can't lose items — cleaner
+than an application-side read-modify-write. A generic `renderDigest` lists the item summaries.
+
+Scoped deliberately: **digest is email-only.** SMS volume is already bounded by spend caps, and
+digest×caps accounting is a genuine complication for little gain, so SMS isn't digested. The other
+documented limitation: the digest fires at the first item's resolved send time — there's no separate
+"digest hour" scheduler; that's a later refinement, not over-engineered now.
+
+## Assistant tools (`tools.ts`, `executor.ts`)
+
+Four new Zod tools, each a single source of truth (runtime validation + the function-calling
+contract): `schedule_reminder` (delivered, channel-aware — `channel` defaults to `'auto'` because
+models over-pick SMS if allowed), `cancel_reminder` (find-by-words like `complete_task`, and it also
+skips any queued-but-unsent delivery), `list_reminders`, and `notify_me` (a one-off "text me X",
+rate-limited to 3 per 10 minutes per user as an abuse guard). Every handler reads its write `error`
+and returns a failure — never the `complete_task` fake-success pattern — and mutations carry an
+undoable receipt.
+
+## A3 / A4 (quality audit)
+
+Both were already fixed in the tree and are now covered by regression tests: A3 —
+`complete_task` (and every new handler) surfaces a failed write as an `Error:` result with no
+receipt; A4 — `runAssistant` collects tool failures into `AssistantResponse.failures`, rendered as
+red chips by `ReceiptChips`, so "I texted you" can never mask a send that didn't happen. That honesty
+is the precondition for trusting the whole pillar.
+
 ## What breaks first at scale
 
 1. **`notification_deliveries` grows unbounded.** One table for queue + audit means every message
@@ -336,6 +416,12 @@ planned for, not discovered at launch.
 
 ## Self-critique (continuous-improvement rule, applied to this design)
 
+0. *Weakest point of the dispatch phase: everything is bound to the 5-minute cron.* A reminder for
+   16:00 fires on the 16:00–16:05 tick, and `notify_me` "text me now" has the same latency — fine for
+   a secretary, wrong for anything truly time-critical. The digest inherits this too: it goes out at
+   the first item's resolved tick, not a chosen digest hour. The fix when it matters is a shorter
+   cron (or a nearest-due wake-up), not a design change — the queue, lease, and dedupe already
+   tolerate it. Called out so "the text was 4 minutes late" is understood, not a surprise.
 0. *Weakest point of the SMS phase: cap counters race under concurrent sends.* Enqueue reads
    `sent-this-period + in-flight` and decides; two enqueues (or two worker instances) interleaving
    between read and the send-time increment can both pass a cap that only one should. The in-flight

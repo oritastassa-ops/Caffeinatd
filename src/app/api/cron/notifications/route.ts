@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServiceClient } from "@/lib/supabase/server";
 import { getChannel } from "@/lib/notifications/registry";
 import { runWorker } from "@/lib/notifications/worker";
+import { dispatchDueReminders } from "@/lib/notifications/reminders";
 
 // A batch of 50 sends, each with a 10s provider timeout, fits comfortably under
 // 60s even in the pathological all-timeout case because sends within a batch are
@@ -28,7 +29,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const summary = await runWorker(getServiceClient(), {
+  const supabase = getServiceClient();
+
+  // First turn any due reminders into pending deliveries, then drain the queue
+  // in the same run — one cron, one queue drainer.
+  const reminders = await dispatchDueReminders(supabase);
+
+  const summary = await runWorker(supabase, {
     getChannel,
     batchSize: BATCH_SIZE,
     leaseMs: LEASE_MS,
@@ -36,5 +43,5 @@ export async function GET(req: NextRequest) {
     appUrl: process.env.APP_URL ?? "",
   });
 
-  return NextResponse.json(summary);
+  return NextResponse.json({ reminders, ...summary });
 }

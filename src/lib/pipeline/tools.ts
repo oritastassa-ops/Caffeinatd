@@ -103,6 +103,30 @@ export const toolSchemas = {
     linked_id: z.string().optional().describe("Id of the linked task/workout/meal, if any"),
   }),
 
+  schedule_reminder: z.object({
+    message: z.string().min(1).describe("What to remind the user about, in their words"),
+    remind_at: z.string().describe("ISO 8601 datetime WITH offset, when it should fire (resolve relative dates against the current local time)"),
+    channel: z.enum(["auto", "email", "sms", "in_app"]).optional()
+      .describe("How to deliver it. Default 'auto' — lets the user's own preferences choose. Use 'sms' ONLY if the user explicitly said to text them; never pick SMS on your own."),
+    urgent: z.boolean().optional()
+      .describe("true ONLY for time-critical reminders that must bypass the user's quiet hours (e.g. 'take medication at 2am'). Default false."),
+  }),
+
+  cancel_reminder: z.object({
+    query: z.string().min(1).describe("Words from the reminder's message, to find it"),
+  }),
+
+  list_reminders: z.object({
+    include_completed: z.boolean().optional(),
+  }),
+
+  notify_me: z.object({
+    message: z.string().min(1).describe("The exact message to send the user"),
+    at: z.string().optional().describe("ISO 8601 with offset to send it later; omit to send as soon as possible"),
+    channel: z.enum(["auto", "email", "sms"]).optional()
+      .describe("Default 'auto'. Use 'sms' ONLY if the user explicitly asked to be texted."),
+  }),
+
   recommend_bedtime: z.object({}),
 
   generate_daily_plan: z.object({
@@ -218,7 +242,13 @@ const toolDescriptions: Record<ToolName, string> = {
     "Store a durable fact the user directly told you (preference, habit, relationship, routine, goal, important event). Saves immediately, no confirmation.",
   suggest_memory:
     "Propose a durable fact YOU inferred from patterns in their data rather than something they stated. Shown to the user as a Remember/Don't-remember choice before it's saved.",
-  create_reminder: "Schedule a reminder that will surface in-app at a specific time.",
+  create_reminder: "Legacy in-app-only reminder (surfaces in the app, no email/SMS). Prefer schedule_reminder for anything the user should be actively notified about.",
+  schedule_reminder:
+    "Schedule a reminder that is actually DELIVERED (email/SMS per the user's preferences) at a time. Use this for 'remind me to…'. Let channel default to 'auto' unless the user names a channel.",
+  cancel_reminder: "Cancel a pending reminder, found by words from its message. Also stops any queued delivery.",
+  list_reminders: "List the user's upcoming (optionally completed) reminders.",
+  notify_me:
+    "Send the user a one-off message now or at a stated time that ISN'T a recurring reminder ('text me the gym summary after my workout'). Use sparingly — never send unprompted or repeatedly.",
   recommend_bedtime: "Compute tonight's recommended bedtime from tomorrow's calendar and sleep goal.",
   generate_daily_plan: "Generate (or regenerate) the structured daily plan for a date.",
   get_fitness_report:

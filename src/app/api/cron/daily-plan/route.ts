@@ -4,6 +4,7 @@ import { getProvider } from "@/lib/ai";
 import { generateDailyPlan } from "@/lib/planning/daily";
 import { enqueueNotification } from "@/lib/notifications/enqueue";
 import { ensureInsights } from "@/lib/insights/generate";
+import { notifyNewInsights, notifyFinanceReview } from "@/lib/notifications/pillar-hooks";
 import { materializeRecurringTransactions, writeSnapshot } from "@/lib/finance/data";
 import { currentWeekStart, generateWeeklyReview } from "@/lib/finance/review";
 import { Profile } from "@/lib/types";
@@ -59,7 +60,10 @@ export async function GET(req: NextRequest) {
         console.error(`[notifications:email] daily_plan enqueue failed for ${profile.id}:`, err);
         return null;
       });
-      await ensureInsights(scoped, profile);
+      const newInsights = await ensureInsights(scoped, profile);
+      // Notify only on genuinely new insights (ensureInsights returns just the
+      // rows it inserted); guarded so a notification failure never breaks the run.
+      await notifyNewInsights(scoped, profile.id, newInsights);
       // Weekly review: generated once per week, on the first cron run of the
       // user's local week (upsert makes reruns harmless).
       const weekStart = currentWeekStart(profile.timezone);
@@ -69,7 +73,8 @@ export async function GET(req: NextRequest) {
         .eq("week_start", weekStart)
         .maybeSingle();
       if (!existingReview) {
-        await generateWeeklyReview(scoped, provider, profile, weekStart).catch(() => null);
+        const review = await generateWeeklyReview(scoped, provider, profile, weekStart).catch(() => null);
+        if (review) await notifyFinanceReview(scoped, profile, weekStart, review);
       }
       results[profile.id] = "ok";
     } catch (err) {

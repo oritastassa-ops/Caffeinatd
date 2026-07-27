@@ -190,7 +190,8 @@ export interface Reminder {
   linked_id: string | null;
   message: string;
   remind_at: string;
-  notification_type: "in_app" | "email" | "push";
+  /** The reminder's channel intent; 'auto' delegates to notification preferences. */
+  notification_type: "in_app" | "auto" | "email" | "sms";
   completed_at: string | null;
 }
 

@@ -27,6 +27,7 @@ import { money } from "@/lib/finance/format";
 import { fetchHomeData, resolveMember } from "@/lib/home/data";
 import { isDueOn, nextAssignee, overdueDays } from "@/lib/home/schedule";
 import { buildHomeReport } from "@/lib/home/report";
+import { enqueueNotification } from "@/lib/notifications/enqueue";
 import {
   endOfDayISO,
   formatDay,
@@ -367,6 +368,119 @@ const handlers: { [N in ToolName]: Handler<N> } = {
         label: `Reminder set: ${args.message} — ${when}`,
         undo: { table: "reminders", id: data.id },
       },
+    };
+  },
+
+  async schedule_reminder(ctx, args) {
+    const tz = ctx.profile.timezone;
+    const channel = args.channel ?? "auto";
+    const { data, error } = await ctx.supabase
+      .from("reminders")
+      .insert({
+        user_id: ctx.profile.id,
+        message: args.message,
+        remind_at: args.remind_at,
+        notification_type: channel, // 'auto' delegates to preferences; else forces the channel
+        urgent: args.urgent ?? false,
+      })
+      .select("id")
+      .single();
+    if (error) throw new Error(error.message);
+    const when = `${formatDay(args.remind_at, tz)} ${formatTime(args.remind_at, tz)}`;
+    const via = channel === "auto" ? "your usual channels" : channel === "in_app" ? "in-app" : channel;
+    return {
+      result: `Reminder set for ${when} (${via}): ${args.message}`,
+      receipt: {
+        tool: "schedule_reminder",
+        label: `Reminder: ${args.message} — ${when}${channel === "auto" ? "" : ` (${via})`}`,
+        undo: { table: "reminders", id: data.id },
+      },
+    };
+  },
+
+  async cancel_reminder(ctx, args) {
+    const { data } = await ctx.supabase
+      .from("reminders")
+      .select("id, message")
+      .is("completed_at", null)
+      .ilike("message", `%${args.query}%`)
+      .limit(2);
+    if (!data?.length) return { result: `No pending reminder matching "${args.query}".` };
+    if (data.length > 1) {
+      return { result: `Ambiguous — matches: ${data.map((r) => r.message).join(" / ")}. Ask which one.` };
+    }
+    const reminder = data[0]!;
+    const { error } = await ctx.supabase
+      .from("reminders")
+      .update({ completed_at: new Date().toISOString() })
+      .eq("id", reminder.id);
+    if (error) throw new Error(error.message);
+    // Stop any queued-but-unsent delivery for it (dedupe_key scopes to this reminder).
+    const { error: delErr } = await ctx.supabase
+      .from("notification_deliveries")
+      .update({ status: "skipped", last_error: "reminder canceled" })
+      .eq("dedupe_key", `reminder:${reminder.id}`)
+      .eq("status", "pending");
+    if (delErr) throw new Error(delErr.message);
+    return {
+      result: `Canceled reminder: ${reminder.message}`,
+      receipt: { tool: "cancel_reminder", label: `Reminder canceled: ${reminder.message}` },
+    };
+  },
+
+  async list_reminders(ctx, args) {
+    const tz = ctx.profile.timezone;
+    let q = ctx.supabase
+      .from("reminders")
+      .select("message, remind_at, notification_type, completed_at")
+      .order("remind_at")
+      .limit(25);
+    if (!args.include_completed) q = q.is("completed_at", null);
+    const { data } = await q;
+    if (!data?.length) return { result: "No reminders." };
+    return {
+      result: data
+        .map(
+          (r) =>
+            `${formatDay(r.remind_at, tz)} ${formatTime(r.remind_at, tz)} — ${r.message}${r.completed_at ? " ✓" : ""}`,
+        )
+        .join("\n"),
+    };
+  },
+
+  async notify_me(ctx, args) {
+    const tz = ctx.profile.timezone;
+    // Per-conversation abuse guard: cap direct one-off messages in a short window
+    // (kind 'system' is only produced by this tool).
+    const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
+    const { count } = await ctx.supabase
+      .from("notification_deliveries")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", ctx.profile.id)
+      .eq("kind", "system")
+      .gte("created_at", tenMinAgo);
+    if ((count ?? 0) >= 3) {
+      return { result: "I've already sent you a few messages in the last few minutes — I'll hold off so I'm not spamming you." };
+    }
+
+    const channel = args.channel && args.channel !== "auto" ? args.channel : undefined;
+    const res = await enqueueNotification(ctx.supabase, {
+      userId: ctx.profile.id,
+      kind: "system",
+      payload: { message: args.message },
+      scheduledFor: args.at ? new Date(args.at) : new Date(),
+      channelOverride: channel,
+      dedupeKey: `notify:${ctx.profile.id}:${Date.now()}`,
+    });
+    if (res.queued === 0) {
+      return {
+        result: `Error: couldn't send that — ${res.skipped.join("; ") || "no verified contact to reach you on"}. Ask the user to verify a contact in Settings.`,
+      };
+    }
+    const whenPhrase = args.at ? `at ${formatDay(args.at, tz)} ${formatTime(args.at, tz)}` : "shortly";
+    return {
+      result: `I'll send you ${whenPhrase}: "${args.message}"`,
+      receipt: { tool: "notify_me", label: `Message queued ${whenPhrase}: ${args.message}` },
     };
   },
 

@@ -8,6 +8,7 @@ import {
   monthRange,
   SmsCaps,
 } from "./limits";
+import { isUrgentKind, resolveSendTime } from "./schedule";
 import { NotificationChannelName, NotificationKind } from "./types";
 
 /** Shape of a `notification_contacts` row (only the columns enqueue reads). */
@@ -89,8 +90,14 @@ export interface EnqueueInput {
   payload: Record<string, unknown>;
   /** Stable key that makes re-enqueuing the same logical event a no-op. */
   dedupeKey?: string;
-  /** When the send worker may deliver this; defaults to now. */
+  /** When the send worker may deliver this; defaults to now. Quiet hours may push it later. */
   scheduledFor?: Date;
+  /** Force a single channel (a reminder's "text me"); overrides the kind's preference channels. */
+  channelOverride?: NotificationChannelName;
+  /** Bypass quiet hours (in addition to kinds that are always urgent). */
+  urgent?: boolean;
+  /** One-line summary used when this kind is digest-batched. */
+  digestLine?: string;
 }
 
 export interface EnqueueResult {
@@ -148,23 +155,61 @@ export async function enqueueNotification(
 
   const pref = resolvePreference(kind, (prefRows ?? []) as PreferenceRow[]);
   const contacts = (contactRows ?? []) as ContactRow[];
-  const plan = planDeliveries(pref, contacts);
+  let plan = planDeliveries(pref, contacts);
   const scheduled = scheduledFor ?? new Date();
+  const urgent = Boolean(input.urgent) || isUrgentKind(kind);
+
+  // A forced channel (a reminder's explicit "text me") narrows the plan to that
+  // channel; if there's no verified contact for it, that becomes a skip reason.
+  if (input.channelOverride) {
+    plan = restrictToChannel(plan, input.channelOverride);
+  }
 
   // Read SMS usage from the DB only when there's an SMS delivery under an active
   // cap; the decision itself is pure (planWithCaps) and unit-tested.
   const caps = resolveSmsCaps(pref);
   const hasSms = plan.deliveries.some((d) => d.channel === "sms");
   const enforce = hasSms && (capEnforced(caps.daily) || capEnforced(caps.monthly));
-  const usage = enforce ? await readSmsUsage(supabase, userId, scheduled) : null;
+
+  // The timezone is needed for cap periods, quiet hours, and digest bucketing —
+  // load it once, only when something actually needs it.
+  const needsTz = enforce || hasSms || pref.digest || Boolean(pref.quietHoursStart || pref.quietHoursEnd);
+  const tz = needsTz ? await getUserTimezone(supabase, userId) : "UTC";
+
+  const usage = enforce ? await readSmsUsage(supabase, userId, scheduled, tz) : null;
   const { finals, skipped } = planWithCaps(plan, pref, contacts, usage, caps);
 
-  const scheduledIso = scheduled.toISOString();
   let queued = 0;
-
-  // One insert per channel so a dedupe conflict on one channel doesn't block the
-  // others — a batch insert is all-or-nothing under the unique index.
   for (const delivery of finals) {
+    // Quiet hours push a pending send to the window's end (per channel — SMS has
+    // a hard floor); urgent kinds and skipped rows are unaffected.
+    const sendAt =
+      delivery.status === "pending"
+        ? resolveSendTime(scheduled, pref, tz, { urgent, channel: delivery.channel }).sendAt
+        : scheduled;
+    const scheduledIso = sendAt.toISOString();
+
+    // Email digest: coalesce all of a kind's events for a local day into one
+    // delivery (email only — SMS volume is already bounded by caps). The RPC
+    // appends atomically, so concurrent enqueues don't lose items.
+    if (delivery.status === "pending" && pref.digest && delivery.channel === "email") {
+      const day = localDay(scheduled, tz);
+      const { error } = await supabase.rpc("append_digest_delivery", {
+        p_user_id: userId,
+        p_kind: kind,
+        p_channel: "email",
+        p_contact_id: delivery.contactId,
+        p_dedupe_key: `digest:${kind}:${userId}:${day}`,
+        p_item: { line: digestLine(input, payload), at: new Date().toISOString() },
+        p_scheduled_for: scheduledIso,
+      });
+      if (error) throw new Error(`Failed to append digest delivery: ${error.message}`);
+      queued += 1;
+      continue;
+    }
+
+    // One insert per channel so a dedupe conflict on one channel doesn't block
+    // the others — a batch insert is all-or-nothing under the unique index.
     const { error } = await supabase.from("notification_deliveries").insert({
       user_id: userId,
       kind,
@@ -189,6 +234,23 @@ export async function enqueueNotification(
   }
 
   return { queued, skipped };
+}
+
+/** Narrow a plan to a single channel (a forced "text me"/"email me" override). */
+function restrictToChannel(plan: DeliveryPlan, channel: NotificationChannelName): DeliveryPlan {
+  const kept = plan.deliveries.filter((d) => d.channel === channel);
+  const skipped = [...plan.skipped, ...plan.deliveries.filter((d) => d.channel !== channel).map((d) => `${d.channel}: suppressed by ${channel} override`)];
+  if (kept.length === 0 && !plan.deliveries.some((d) => d.channel === channel)) {
+    skipped.push(`${channel}: no verified contact for the requested channel`);
+  }
+  return { deliveries: kept, skipped };
+}
+
+/** The line appended to a digest — the caller's summary, else the payload message. */
+function digestLine(input: EnqueueInput, payload: Record<string, unknown>): string {
+  if (input.digestLine) return input.digestLine;
+  const message = payload.message ?? payload.overview;
+  return typeof message === "string" && message ? message : "Update";
 }
 
 /**
@@ -273,8 +335,7 @@ async function getUserTimezone(supabase: SupabaseClient, userId: string): Promis
   return data?.timezone || "UTC";
 }
 
-async function readSmsUsage(supabase: SupabaseClient, userId: string, now: Date): Promise<CapUsage> {
-  const tz = await getUserTimezone(supabase, userId);
+async function readSmsUsage(supabase: SupabaseClient, userId: string, now: Date, tz: string): Promise<CapUsage> {
   const day = localDay(now, tz);
   const { start, endExclusive } = monthRange(now, tz);
 

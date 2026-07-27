@@ -235,8 +235,26 @@ export function computeInsightCandidates(profile: Profile, input: InsightGenInpu
   ];
 }
 
-/** Runs the rule set against real data and upserts new/still-relevant insights. Cheap — DB reads only. */
-export async function ensureInsights(supabase: SupabaseClient, profile: Profile): Promise<void> {
+/** An insight row as freshly inserted — the caller notifies on these. */
+export interface CreatedInsight {
+  id: string;
+  domain: InsightDomain;
+  message: string;
+  importance: number;
+  dedup_key: string;
+}
+
+/**
+ * Runs the rule set against real data and upserts new/still-relevant insights.
+ * Cheap — DB reads only. Returns ONLY the rows actually inserted this run (the
+ * `ignoreDuplicates` upsert with `.select()` returns just the non-conflicting
+ * inserts), so the caller can notify on genuinely new insights and not re-notify
+ * on regeneration.
+ */
+export async function ensureInsights(
+  supabase: SupabaseClient,
+  profile: Profile,
+): Promise<CreatedInsight[]> {
   const tz = profile.timezone;
   const today = localDateStr(tz);
   const weekAgo = new Date(Date.now() - 28 * 86400_000).toISOString().slice(0, 10);
@@ -309,9 +327,9 @@ export async function ensureInsights(supabase: SupabaseClient, profile: Profile)
     // home hiccup shouldn't block other insights
   }
 
-  if (candidates.length === 0) return;
+  if (candidates.length === 0) return [];
 
-  await supabase
+  const { data, error } = await supabase
     .from("insights")
     .upsert(
       candidates.map((c) => ({
@@ -325,5 +343,8 @@ export async function ensureInsights(supabase: SupabaseClient, profile: Profile)
         action_preset: c.actionPreset ?? null,
       })),
       { onConflict: "user_id,dedup_key", ignoreDuplicates: true },
-    );
+    )
+    .select("id, domain, message, importance, dedup_key");
+  if (error) throw new Error(`Failed to save insights: ${error.message}`);
+  return (data ?? []) as CreatedInsight[];
 }

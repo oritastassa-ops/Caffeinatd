@@ -4,6 +4,7 @@ process.env.NOTIFICATION_SECRET = "test-pepper-not-a-real-secret";
 
 import { renderEmail, renderVerificationCode } from "@/lib/notifications/templates";
 import { parseUnsubscribe, signUnsubscribe } from "@/lib/notifications/unsubscribe";
+import type { NotificationKind } from "@/lib/notifications/types";
 
 const ctx = { unsubscribeUrl: "https://app.test/api/notifications/unsubscribe?token=T" };
 
@@ -38,7 +39,9 @@ describe("email templates render text and email-safe html", () => {
   });
 
   it("returns null for a kind with no email template", () => {
-    expect(renderEmail("system", {}, ctx)).toBeNull();
+    // Every real kind is templated as of Phase 4; an unknown kind still degrades
+    // to null (the worker then records a non-retryable failure) rather than throw.
+    expect(renderEmail("mystery_kind" as NotificationKind, { message: "x" }, ctx)).toBeNull();
   });
 
   it("verification is transactional — has a code, no unsubscribe footer", () => {
