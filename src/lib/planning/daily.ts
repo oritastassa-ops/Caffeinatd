@@ -247,12 +247,16 @@ export async function generateDailyPlan(
 }
 
 function parsePlanJSON(text: string): z.infer<typeof planSchema> {
+  // Models wrap JSON in fences or add commentary despite instructions; take
+  // the outermost brace span and tolerate trailing commas before giving up.
   const match = text.match(/\{[\s\S]*\}/);
   if (match) {
-    try {
-      return planSchema.parse(JSON.parse(match[0]));
-    } catch {
-      // fall through
+    for (const candidate of [match[0], match[0].replace(/,\s*([}\]])/g, "$1")]) {
+      try {
+        return planSchema.parse(JSON.parse(candidate));
+      } catch {
+        // try the next repair
+      }
     }
   }
   // Fail loud rather than persisting a hollow plan the UI would show as success.
