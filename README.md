@@ -73,8 +73,19 @@ Key design decisions:
 - **No Google SDK** — OAuth2 + Calendar REST are called directly
   ([src/lib/google/](src/lib/google)).
 
-Deeper design docs live in [docs/](docs): [product](docs/01-product.md) ·
-[architecture](docs/02-architecture.md) · [UX](docs/03-ux.md) · [roadmap](docs/04-roadmap.md).
+Deeper design docs live in [docs/](docs) — each explains *why*, cites `file:line`, and ends with an
+honest self-critique:
+
+- **Foundations** — [product](docs/01-product.md) · [architecture](docs/02-architecture.md) ·
+  [UX](docs/03-ux.md) · [roadmap](docs/04-roadmap.md) ·
+  [technical/product review](docs/05-technical-product-review.md) ·
+  [phase-1 roadmap](docs/06-phase1-roadmap.md)
+- **Pillars** — [Hevy integration](docs/07-hevy-integration-plan.md) ·
+  [fitness intelligence](docs/08-fitness-intelligence-plan.md) ·
+  [finance](docs/09-finance-architecture.md) · [home](docs/10-home-architecture.md) ·
+  [AI-OS plan](docs/13-ai-os-plan.md) · [notifications](docs/14-notifications-architecture.md)
+- **Design & quality** — [visual redesign](docs/09-coffee-redesign-plan.md) ·
+  [avatars](docs/11-avatars-design.md) · [quality audit](docs/12-quality-audit.md)
 
 ## Technology stack
 
