@@ -1,5 +1,6 @@
 import { LoggingChannel } from "./channels/logging";
 import { ResendChannel } from "./channels/email";
+import { TwilioChannel } from "./channels/sms";
 import { NotificationChannel, NotificationChannelName } from "./types";
 
 /**
@@ -18,7 +19,10 @@ export interface NotificationEnv {
   NOTIFICATIONS_DRIVER?: string;
   RESEND_API_KEY?: string;
   NOTIFICATIONS_FROM_EMAIL?: string;
-  // Phase 3 reads TWILIO_* here.
+  TWILIO_ACCOUNT_SID?: string;
+  TWILIO_AUTH_TOKEN?: string;
+  TWILIO_FROM_NUMBER?: string;
+  TWILIO_MESSAGING_SERVICE_SID?: string;
 }
 
 function buildRegistry(
@@ -36,7 +40,16 @@ function buildRegistry(
   if (env.RESEND_API_KEY && env.NOTIFICATIONS_FROM_EMAIL) {
     registry.email = new ResendChannel(env.RESEND_API_KEY, env.NOTIFICATIONS_FROM_EMAIL);
   }
-  // Phase 3 adds `registry.sms` from TWILIO_* here.
+  // SMS needs the account creds plus a sender (a Messaging Service SID, preferred,
+  // or a bare From number). Missing either → the channel stays unregistered.
+  if (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && (env.TWILIO_MESSAGING_SERVICE_SID || env.TWILIO_FROM_NUMBER)) {
+    registry.sms = new TwilioChannel({
+      accountSid: env.TWILIO_ACCOUNT_SID,
+      authToken: env.TWILIO_AUTH_TOKEN,
+      from: env.TWILIO_FROM_NUMBER,
+      messagingServiceSid: env.TWILIO_MESSAGING_SERVICE_SID,
+    });
+  }
   return registry;
 }
 

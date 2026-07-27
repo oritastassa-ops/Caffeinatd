@@ -12,6 +12,10 @@ export const maxDuration = 60;
 
 const BATCH_SIZE = 50;
 const LEASE_MS = 10 * 60_000; // a stranded 'sending' row is reclaimable after 10m
+// Global backstop on SMS sends per run — a second line of defense against a
+// runaway loop, on top of the per-user caps enforced at enqueue. Overridable so
+// a legitimately busy deployment can raise it.
+const SMS_MAX_PER_RUN = Number.parseInt(process.env.SMS_MAX_PER_RUN ?? "200", 10);
 
 /**
  * Vercel Cron (every 5 min) — drains the notification queue. Authenticated by
@@ -28,6 +32,7 @@ export async function GET(req: NextRequest) {
     getChannel,
     batchSize: BATCH_SIZE,
     leaseMs: LEASE_MS,
+    smsMaxPerRun: Number.isFinite(SMS_MAX_PER_RUN) ? SMS_MAX_PER_RUN : 200,
     appUrl: process.env.APP_URL ?? "",
   });
 

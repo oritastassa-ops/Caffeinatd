@@ -19,21 +19,29 @@ describe("normalizeEmail", () => {
 });
 
 describe("normalizePhone", () => {
-  it("accepts E.164 and strips separators", () => {
-    expect(normalizePhone("+1 (415) 555-0123")).toEqual({ ok: true, address: "+14155550123" });
+  it("accepts E.164 and canonicalizes formatting", () => {
+    expect(normalizePhone("+1 (650) 253-0000")).toEqual({ ok: true, address: "+16502530000" });
+    expect(normalizePhone("+44 7911 123456")).toEqual({ ok: true, address: "+447911123456" });
   });
 
-  it("rewrites a 00 international prefix to +", () => {
-    expect(normalizePhone("00447911123456")).toEqual({ ok: true, address: "+447911123456" });
+  it("rejects a well-formed but impossible number (real parser, not a regex)", () => {
+    // Shape-valid but not a real NANP number — the exact class a regex misses.
+    expect(normalizePhone("+1 555 555 5555").ok).toBe(false);
+    expect(normalizePhone("+12").ok).toBe(false);
+    expect(normalizePhone("+abcdefghij").ok).toBe(false);
   });
 
-  it("refuses to guess a country for a bare national number", () => {
-    expect(normalizePhone("4155550123").ok).toBe(false);
+  it("refuses a bare national number when no default region is configured", () => {
+    delete process.env.NOTIFICATIONS_DEFAULT_REGION;
+    expect(normalizePhone("6502530000").ok).toBe(false);
   });
 
-  it("rejects non-numeric, too-short, and leading-zero numbers", () => {
-    for (const bad of ["+", "+0123456789", "+12", "+abcdefghij", "12345"]) {
-      expect(normalizePhone(bad).ok).toBe(false);
+  it("accepts a national number when NOTIFICATIONS_DEFAULT_REGION is set", () => {
+    process.env.NOTIFICATIONS_DEFAULT_REGION = "US";
+    try {
+      expect(normalizePhone("(650) 253-0000")).toEqual({ ok: true, address: "+16502530000" });
+    } finally {
+      delete process.env.NOTIFICATIONS_DEFAULT_REGION;
     }
   });
 });
@@ -41,6 +49,6 @@ describe("normalizePhone", () => {
 describe("normalizeAddress dispatch", () => {
   it("routes to the channel's normalizer", () => {
     expect(normalizeAddress("email", "A@B.CO")).toEqual({ ok: true, address: "a@b.co" });
-    expect(normalizeAddress("sms", "+14155550123").ok).toBe(true);
+    expect(normalizeAddress("sms", "+16502530000").ok).toBe(true);
   });
 });

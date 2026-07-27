@@ -14,7 +14,7 @@ async function turnOffEmail(userId: string, kind: NotificationKind): Promise<boo
   const supabase = getServiceClient();
   const { data: rows, error: readErr } = await supabase
     .from("notification_preferences")
-    .select("kind, enabled, channels, quiet_hours_start, quiet_hours_end, digest")
+    .select("kind, enabled, channels, quiet_hours_start, quiet_hours_end, digest, sms_daily_cap, sms_monthly_cap, downgrade_to_email")
     .eq("user_id", userId);
   if (readErr) return false;
 

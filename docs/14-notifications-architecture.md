@@ -223,6 +223,98 @@ Gmail/Outlook route it to spam or reject it outright, and no amount of applicati
 This is deployment config, not code — called out here so "emails aren't arriving" has an obvious
 first thing to check.
 
+---
+
+# Phase 3: the SMS channel (Twilio)
+
+SMS is the only channel that reliably interrupts someone — its value and its risk. Every decision
+here answers "what happens when this loop runs over 500 users at 4am and each message costs money."
+Three things are non-negotiable because they are A2P compliance law, not preferences: verified
+opt-in, honored STOP/HELP/START, and a hard quiet-hours floor.
+
+## Where each compliance rule is enforced
+
+| Rule | Enforced in |
+|---|---|
+| Verified opt-in only (no manual override) | `planDeliveries` — an SMS contact is deliverable only if `verified_at` is set and `opted_out_at` is null (`enqueue.ts`) |
+| STOP / UNSUBSCRIBE / CANCEL / END / QUIT → permanent opt-out | inbound webhook mirrors it to `opted_out_at`; Twilio error `21610` on send does the same |
+| START / UNSTOP → re-subscribe | inbound webhook clears `opted_out_at` |
+| HELP / INFO → service identity + opt-out info | Twilio Advanced Opt-Out auto-replies on the messaging service; we no-op (nothing to mirror) |
+| Quiet-hours hard floor (22:00–08:00 local, non-urgent) | declared as `SMS_QUIET_FLOOR` (`limits.ts`); Phase 4 owns the scheduling math that applies it |
+
+The webhook **mirrors** Twilio's own opt-out state rather than trusting Twilio to be the only
+record. If we didn't, the DB would keep queueing to a number Twilio silently drops, and the
+delivery log would lie about what the user received.
+
+## The channel: form-encoded, Basic auth, no SDK
+
+`channels/sms.ts` posts to Twilio's Messages endpoint with `fetch` — same no-SDK precedent as Google
+and Resend. Two SDK-translation traps are commented in the code: the body is
+`application/x-www-form-urlencoded` (not JSON), and auth is HTTP Basic (Account SID as user, Auth
+Token as password). A Messaging Service SID is preferred over a bare From number because it handles
+number pooling, sticky sender, and compliance routing.
+
+Error mapping matters more than for email because failures cost money, and two codes mutate contact
+state, not just delivery state — surfaced via `SendResult.contactAction`, which the worker applies:
+
+- `21610` (recipient opted out) → non-retryable **and** `opt_out`: write `opted_out_at` so nothing
+  queues here again.
+- `21614` (invalid mobile number) → non-retryable **and** `invalidate`: clear `verified_at` so the
+  number must be re-verified.
+- `21408` (region not permitted) → non-retryable, distinct message, no contact mutation.
+- `20429` / 5xx / network → retryable (rides the Phase 2 backoff).
+
+## `normalizeAddress`: libphonenumber-js, and why the dependency earns its keep
+
+A regex validates *shape*; `+15551234567` is well-formed and also a number Twilio bills us to
+reject. We added **`libphonenumber-js`** (~145 kB, pure JS, no native deps, actively maintained) so
+`normalizePhone` validates a number is *possible* for its region against Google's metadata and emits
+canonical E.164. The alternative — a hand-rolled regex plus a default-region setting — cannot tell a
+real number from a plausible-looking fake, and on the one channel where mistakes cost money that
+distinction is the whole point. A bare national number is accepted only when
+`NOTIFICATIONS_DEFAULT_REGION` is set; otherwise we refuse to guess a country, because a
+wrong-country SMS is a real charge to a real stranger.
+
+## Spend caps: enforced at enqueue, counted at send
+
+Caps live in `limits.ts` as pure functions and are enforced in `enqueueNotification`, **before** a
+row is created — queuing a message we'll refuse to send just produces a `failed` row and a confused
+user. The brief put enforcement at enqueue; I kept that but fixed a hole in the obvious
+implementation:
+
+- The counter (`notification_spend`, incremented by the worker via the atomic
+  `increment_notification_spend` RPC) increments **on `sent`**, so a retrying message isn't
+  double-counted. Correct for billing, but a burst enqueued before anything sends would all read
+  `count = 0` and all pass.
+- So the enqueue-time check counts **sent-this-period + in-flight (pending/sending) SMS**
+  (`readSmsUsage` → `evaluateCaps`). The in-flight term bounds a burst immediately; a retry stays
+  one row, so it's still counted once at any instant. Periods are the user-**local** day and month
+  (`localDay`/`monthRange`), so caps roll over at local midnight, tested across a DST transition.
+- The worker keeps a **global per-run SMS cap** (`SMS_MAX_PER_RUN`) as a second line of defense: an
+  over-cap run leaves SMS `pending` for the next tick rather than sending.
+
+Over-cap SMS is, in order: dropped if email is already queued (the info still arrives), else
+**downgraded to a verified email** if `downgrade_to_email` is on (the better outcome — the user
+still gets the information), else written as a `skipped` audit row. The whole decision is the pure
+`planWithCaps`, unit-tested without a database.
+
+## Webhook signature: the one security detail that matters most
+
+`sms/inbound/route.ts` validates `X-Twilio-Signature` (`twilio-signature.ts`: HMAC-SHA1 over URL +
+sorted params, base64) against `TWILIO_AUTH_TOKEN` **before trusting a single byte of the body**. An
+unauthenticated webhook that flips opt-out state is a trivial denial-of-service against your own
+users — POST `STOP` for every number and nobody gets messaged again. Every mutation keys off the
+phone **number** in the verified body, never a user id from the request. Status callbacks update the
+delivery by `provider_message_id`; STOP/START mirror into `notification_contacts`. Conversational
+inbound is a marked no-op extension point, not faked.
+
+## A2P 10DLC lead time (deployment, not code)
+
+US A2P traffic requires **A2P 10DLC brand + campaign registration before production sending** — it
+takes days to approve, and unregistered traffic is carrier-filtered. Toll-free numbers are an
+alternative but still need toll-free verification (also days). Documented in `.env.example` so it's
+planned for, not discovered at launch.
+
 ## What breaks first at scale
 
 1. **`notification_deliveries` grows unbounded.** One table for queue + audit means every message
@@ -244,7 +336,17 @@ first thing to check.
 
 ## Self-critique (continuous-improvement rule, applied to this design)
 
-1. *Weakest point*: preference **defaults are hard-coded per kind** and email-only. The moment a
+0. *Weakest point of the SMS phase: cap counters race under concurrent sends.* Enqueue reads
+   `sent-this-period + in-flight` and decides; two enqueues (or two worker instances) interleaving
+   between read and the send-time increment can both pass a cap that only one should. The in-flight
+   term shrinks the window versus a naive sent-only counter, and the per-run global cap and the DB
+   dedupe index bound the blast radius, but nothing here is a true distributed semaphore. At this
+   scale (one daily_plan per user per day, one 5-minute cron) the window is effectively never hit;
+   the honest fix if it ever mattered is to move the check into the atomic `increment_notification_spend`
+   RPC — increment-and-return, reject if over cap — so the read and the decision are one statement.
+   Deliberately not built now: it trades the clean pure-function `evaluateCaps` (and its tests) for
+   DB-resident logic, which isn't worth it until concurrency is real.
+1. *Preference **defaults are hard-coded per kind** and email-only.* The moment a
    user has only a verified phone, every default-email notification silently `skip`s until they
    change settings. Mitigation shipped: `enqueueNotification` returns `skipped[]` with the reason,
    so Phase 5 can surface "we couldn't reach you" instead of failing silent — the exact

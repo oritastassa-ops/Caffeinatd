@@ -30,12 +30,22 @@ export interface SendRequest {
   idempotencyKey: string;
 }
 
+/**
+ * A durable change a send outcome demands to the contact's own state — distinct
+ * from the delivery's retry state. Twilio reporting "recipient opted out" or
+ * "invalid number" means this destination must never be tried again, so the
+ * channel signals it and the worker applies it to notification_contacts.
+ */
+export type ContactAction = "opt_out" | "invalidate";
+
 export interface SendResult {
   ok: boolean;
   providerMessageId?: string;
   /** Safe, user-facing. Never the provider's raw error body. */
   error?: string;
   retryable: boolean;
+  /** When set, the worker mutates the contact (opt-out / mark unverified). */
+  contactAction?: ContactAction;
 }
 
 /** Result of validating + normalizing a destination before it is stored. */

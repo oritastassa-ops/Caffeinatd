@@ -1,3 +1,4 @@
+import { CountryCode, parsePhoneNumberFromString } from "libphonenumber-js";
 import { NormalizeResult, NotificationChannelName } from "./types";
 
 /**
@@ -24,22 +25,32 @@ export function normalizeEmail(raw: string): NormalizeResult {
 }
 
 /**
- * Normalize to E.164 (`+` then 8–15 digits). We do not guess a country: a bare
- * national number is rejected rather than silently assumed to be +1, because a
- * wrong-country SMS is a real charge sent to a real stranger. A leading `00`
- * international prefix is accepted and rewritten to `+`.
+ * Normalize to strict E.164 using libphonenumber-js — a real parser with
+ * Google's per-region metadata, not a regex. A regex can only check shape:
+ * `+15551234567` is well-formed but not a number that exists, and Twilio bills
+ * us to reject it. The parser validates the number is possible for its region
+ * and returns canonical E.164. See docs/14 for why the dependency earns its keep.
+ *
+ * A bare national number is only accepted when NOTIFICATIONS_DEFAULT_REGION is
+ * set (ISO 3166-1 alpha-2, e.g. "US") — otherwise we refuse to guess a country,
+ * because a wrong-country SMS is a real charge to a real stranger.
  */
 export function normalizePhone(raw: string): NormalizeResult {
-  let s = raw.trim().replace(/[\s()\-.]/g, "");
-  if (s.startsWith("00")) s = `+${s.slice(2)}`;
-  if (!s.startsWith("+")) {
-    return { ok: false, error: "Enter the number in international format, e.g. +14155550123." };
+  const input = raw.trim();
+  if (!input) return { ok: false, error: "Enter a phone number." };
+
+  const region = process.env.NOTIFICATIONS_DEFAULT_REGION as CountryCode | undefined;
+  const parsed = parsePhoneNumberFromString(input, region);
+
+  if (!parsed || !parsed.isValid()) {
+    return {
+      ok: false,
+      error: region
+        ? "That doesn't look like a valid phone number."
+        : "Enter the number in international format, e.g. +14155550123.",
+    };
   }
-  const digits = s.slice(1);
-  if (!/^[1-9]\d{7,14}$/.test(digits)) {
-    return { ok: false, error: "That doesn't look like a valid phone number." };
-  }
-  return { ok: true, address: `+${digits}` };
+  return { ok: true, address: parsed.number }; // E.164, e.g. +14155550123
 }
 
 /** Route a raw address to the right normalizer for its channel. */

@@ -18,6 +18,11 @@ export interface EffectivePreference {
   quietHoursStart: string | null;
   quietHoursEnd: string | null;
   digest: boolean;
+  /** Per-user SMS cap overrides; null means "use the env default". */
+  smsDailyCap: number | null;
+  smsMonthlyCap: number | null;
+  /** When an SMS is over cap, deliver it as email instead of dropping it. */
+  downgradeToEmail: boolean;
 }
 
 /** Shape of a `notification_preferences` row (only the columns we read). */
@@ -28,11 +33,15 @@ export interface PreferenceRow {
   quiet_hours_start: string | null;
   quiet_hours_end: string | null;
   digest: boolean;
+  sms_daily_cap: number | null;
+  sms_monthly_cap: number | null;
+  downgrade_to_email: boolean;
 }
 
 // Everything on, email-only, no quiet hours. Email is the one channel that
 // needs no phone verification and carries no per-message charge, so it is the
-// safe default; SMS is opt-in per kind once a phone is verified.
+// safe default; SMS is opt-in per kind once a phone is verified. Downgrade is on
+// by default so an over-cap SMS still reaches the user by email.
 function defaultFor(kind: NotificationKind): EffectivePreference {
   return {
     kind,
@@ -41,6 +50,9 @@ function defaultFor(kind: NotificationKind): EffectivePreference {
     quietHoursStart: null,
     quietHoursEnd: null,
     digest: false,
+    smsDailyCap: null,
+    smsMonthlyCap: null,
+    downgradeToEmail: true,
   };
 }
 
@@ -57,6 +69,9 @@ function toEffective(kind: NotificationKind, row: PreferenceRow): EffectivePrefe
     quietHoursStart: row.quiet_hours_start,
     quietHoursEnd: row.quiet_hours_end,
     digest: row.digest,
+    smsDailyCap: row.sms_daily_cap ?? null,
+    smsMonthlyCap: row.sms_monthly_cap ?? null,
+    downgradeToEmail: row.downgrade_to_email ?? true,
   };
 }
 

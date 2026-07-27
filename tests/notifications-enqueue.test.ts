@@ -4,8 +4,10 @@ import {
   ContactRow,
   enqueueNotification,
   planDeliveries,
+  planWithCaps,
 } from "@/lib/notifications/enqueue";
-import { PreferenceRow, resolvePreference } from "@/lib/notifications/preferences";
+import { EffectivePreference, PreferenceRow, resolvePreference } from "@/lib/notifications/preferences";
+import { CapUsage, SmsCaps } from "@/lib/notifications/limits";
 
 function contact(overrides: Partial<ContactRow>): ContactRow {
   return {
@@ -13,6 +15,7 @@ function contact(overrides: Partial<ContactRow>): ContactRow {
     channel: "email",
     address: "me@example.com",
     verified_at: "2026-07-01T00:00:00Z",
+    opted_out_at: null,
     is_primary: false,
     created_at: "2026-07-01T00:00:00Z",
     ...overrides,
@@ -26,6 +29,9 @@ const pref = (over: Partial<PreferenceRow>): PreferenceRow => ({
   quiet_hours_start: null,
   quiet_hours_end: null,
   digest: false,
+  sms_daily_cap: null,
+  sms_monthly_cap: null,
+  downgrade_to_email: true,
   ...over,
 });
 
@@ -79,6 +85,62 @@ describe("planDeliveries", () => {
       contact({ id: "newest", created_at: "2026-07-20T00:00:00Z" }),
     ]);
     expect(plan.deliveries[0]?.contactId).toBe("primary");
+  });
+
+  it("skips an opted-out contact (STOP means never queue here again)", () => {
+    const plan = planDeliveries(resolvePreference("reminder", [pref({ channels: ["sms"] })]), [
+      contact({ id: "s1", channel: "sms", address: "+16502530000", verified_at: "2026-07-01T00:00:00Z", opted_out_at: "2026-07-10T00:00:00Z" }),
+    ]);
+    expect(plan.deliveries).toHaveLength(0);
+    expect(plan.skipped).toContain("sms: no verified contact");
+  });
+});
+
+// ── planWithCaps (pure cap / downgrade / skip decisions) ─────────────────────
+
+describe("planWithCaps", () => {
+  const caps: SmsCaps = { daily: 5, monthly: 100 };
+  const smsPref = (over: Partial<EffectivePreference> = {}): EffectivePreference =>
+    resolvePreference("reminder", [pref({ channels: ["sms"], downgrade_to_email: over.downgradeToEmail ?? true })]);
+  const underCap: CapUsage = { sentToday: 0, sentMonth: 0, inFlight: 0 };
+  const atCap: CapUsage = { sentToday: 5, sentMonth: 0, inFlight: 0 };
+
+  const smsDelivery = { channel: "sms" as const, contactId: "s1", address: "+16502530000" };
+  const emailContact = contact({ id: "e1", channel: "email", verified_at: "2026-07-01T00:00:00Z" });
+  const smsContact = contact({ id: "s1", channel: "sms", address: "+16502530000", verified_at: "2026-07-01T00:00:00Z" });
+
+  it("passes SMS through as pending when under cap", () => {
+    const { finals } = planWithCaps({ deliveries: [smsDelivery], skipped: [] }, smsPref(), [smsContact], underCap, caps);
+    expect(finals).toEqual([{ ...smsDelivery, status: "pending", lastError: null }]);
+  });
+
+  it("downgrades over-cap SMS to a verified email when downgrade is on", () => {
+    const { finals, skipped } = planWithCaps(
+      { deliveries: [smsDelivery], skipped: [] },
+      smsPref({ downgradeToEmail: true }),
+      [smsContact, emailContact],
+      atCap,
+      caps,
+    );
+    expect(finals).toEqual([{ channel: "email", contactId: "e1", address: "me@example.com", status: "pending", lastError: null }]);
+    expect(skipped.some((s) => /downgraded to email/.test(s))).toBe(true);
+  });
+
+  it("records a skipped row when over cap with no downgrade target", () => {
+    const { finals, skipped } = planWithCaps(
+      { deliveries: [smsDelivery], skipped: [] },
+      smsPref({ downgradeToEmail: false }),
+      [smsContact],
+      atCap,
+      caps,
+    );
+    expect(finals).toEqual([{ ...smsDelivery, status: "skipped", lastError: "sms: daily spend cap reached" }]);
+    expect(skipped).toContain("sms: daily spend cap reached");
+  });
+
+  it("leaves SMS untouched when no cap is active (usage null)", () => {
+    const { finals } = planWithCaps({ deliveries: [smsDelivery], skipped: [] }, smsPref(), [smsContact], null, caps);
+    expect(finals[0]?.status).toBe("pending");
   });
 });
 
