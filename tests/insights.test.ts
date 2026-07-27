@@ -118,9 +118,12 @@ describe("insight generation (deterministic rules)", () => {
   });
 
   it("flags a plateaued exercise with no progress over the last month", () => {
+    // Dates are relative to now: the plateau rule compares the last 30 days
+    // against the 30–60 days before that, so absolute dates age out of the window.
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
     const setRows = [
-      { exercise: "Bench Press", performed_on: "2026-07-01", reps: 5, weight_kg: 90 }, // last 30d
-      { exercise: "Bench Press", performed_on: "2026-05-20", reps: 5, weight_kg: 100 }, // 30-60d ago, was heavier
+      { exercise: "Bench Press", performed_on: daysAgo(10), reps: 5, weight_kg: 90 }, // last 30d
+      { exercise: "Bench Press", performed_on: daysAgo(45), reps: 5, weight_kg: 100 }, // 30–60d ago, was heavier
     ];
     const candidates = computeInsightCandidates(profile, {
       workouts: [],
