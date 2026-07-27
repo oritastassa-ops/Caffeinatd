@@ -25,6 +25,8 @@ export interface SendRequest {
   subject?: string; // email only; SMS ignores
   body: string; // plain text, always present
   html?: string; // email only
+  /** Extra transport headers (email only) — e.g. List-Unsubscribe. SMS ignores. */
+  headers?: Record<string, string>;
   idempotencyKey: string;
 }
 

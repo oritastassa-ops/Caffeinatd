@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServiceClient } from "@/lib/supabase/server";
 import { getProvider } from "@/lib/ai";
 import { generateDailyPlan } from "@/lib/planning/daily";
+import { enqueueNotification } from "@/lib/notifications/enqueue";
 import { ensureInsights } from "@/lib/insights/generate";
 import { materializeRecurringTransactions, writeSnapshot } from "@/lib/finance/data";
 import { currentWeekStart, generateWeeklyReview } from "@/lib/finance/review";
@@ -43,7 +44,21 @@ export async function GET(req: NextRequest) {
       // materialize due recurring transactions, then snapshot net worth.
       await materializeRecurringTransactions(scoped, profile.id).catch(() => null);
       await writeSnapshot(scoped, profile.id).catch(() => null);
-      await generateDailyPlan(scoped, provider, profile);
+      const generated = await generateDailyPlan(scoped, provider, profile);
+      // Deliver the plan off-app. The dedupeKey (user + plan date) is why a
+      // re-run of the 04:00 cron can't double-send. Only reached on real
+      // success — generateDailyPlan now throws on a failed upsert or unparseable
+      // plan (docs/12 §A1/§A2) — and guarded so a notification failure never
+      // fails plan generation.
+      await enqueueNotification(scoped, {
+        userId: profile.id,
+        kind: "daily_plan",
+        payload: { name: profile.display_name, plan: generated.plan },
+        dedupeKey: `daily_plan:${profile.id}:${generated.plan.date}`,
+      }).catch((err) => {
+        console.error(`[notifications:email] daily_plan enqueue failed for ${profile.id}:`, err);
+        return null;
+      });
       await ensureInsights(scoped, profile);
       // Weekly review: generated once per week, on the first cron run of the
       // user's local week (upsert makes reruns harmless).

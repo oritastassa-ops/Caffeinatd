@@ -125,6 +125,104 @@ guessing, and a fast keyed hash keeps the verify path cheap. The residual risk �
 both the DB *and* the app secret is back to brute-forcing 10^6 — is acceptable for a
 short-lived, single-use code and is why the code also expires and burns attempts.
 
+---
+
+# Phase 2: the email channel and the drain worker
+
+Phase 1 could record intent; Phase 2 delivers it. The morning daily plan now lands in an inbox
+before the app is opened. Two channels-worth of surface — `ResendChannel` and the cron worker —
+plus templates and unsubscribe.
+
+## The channel: Resend over `fetch`, no SDK
+
+`src/lib/notifications/channels/email.ts` calls the Resend REST API directly, matching the repo's
+Google-Calendar precedent (`src/lib/google/calendar.ts`, README "No Google SDK"): fewer deps, no
+version churn, and — the part that actually earns it — full control over the response mapping,
+which is where email reliability lives:
+
+- **2xx** → `ok`, capture `providerMessageId`.
+- **429 / 5xx** → `retryable`. Transient; the backoff will get it.
+- **other 4xx** (bad address, suppressed recipient, auth) → **not** retryable. These never succeed
+  on retry; retrying burns Resend quota and delays real mail behind a message that is already dead.
+- **network / abort (timeout)** → retryable. A 10s `AbortController` bounds each send so one hung
+  request can't consume the worker's whole budget.
+
+The raw provider body is logged server-side under `[notifications:email]` (greppable in Vercel
+logs) and **never** returned; `SendResult.error` is always a sentence a user could read — the same
+rule as `TestConnectionResult` (`src/lib/integrations/types.ts`).
+
+`NOTIFICATIONS_DRIVER` stays the single switch: `logging` (default) routes both channels to the
+stub; `live` assembles real channels from vendor creds, and a channel whose creds are absent is
+simply not registered — email works while SMS still degrades cleanly.
+
+## Templates: typed functions, not a rendering framework
+
+`src/lib/notifications/templates/` — each template is a pure `payload → { subject, text, html }`
+function (no React Email, no MJML), unit-testable without a renderer. `text` is first-class, never
+an afterthought: watches and text-only clients show it. The HTML obeys what email clients actually
+enforce — a single centered table, every style inline, ~600px, a hidden preheader, no flex/grid, no
+external CSS. A `<style>` block is used *only* for `prefers-color-scheme`, as progressive
+enhancement that degrades to the inline light-mode values. Every payload string is escaped
+(`escapeHtml`) so a reminder body of `<script>` can't inject.
+
+Verification is deliberately standalone (`verification-code.ts`): transactional mail carries no
+unsubscribe footer and no marketing chrome, and it must render `text` because SMS (Phase 3) sends
+the same code through `body`.
+
+### Why the unsubscribe link is signed
+
+Every non-transactional email carries a one-click unsubscribe link and the matching
+`List-Unsubscribe` / `List-Unsubscribe-Post: One-Click` headers (RFC 8058; Gmail bulk-sender rules
+expect them). The token is an HMAC over `(userId, kind)` — a bare user id in the URL is an
+enumeration hole (guess a uuid, unsubscribe a stranger). It's stateless (no DB row), and the route
+uses the service client because the *signature is the authorization*; it writes only the
+`(user, kind)` the token proves. Unsubscribe is granular — it removes `email` from that kind's
+channels, not a blanket kill — reusing `resolvePreference` so the user keeps every other kind and
+channel.
+
+## The drain worker and its claim race
+
+`src/app/api/cron/notifications/route.ts` (every 5 min, `CRON_SECRET` bearer, `maxDuration=60`,
+batch 50) delegates to `runWorker` (`src/lib/notifications/worker.ts`), extracted so the
+claim → send → finalize loop is testable against a fake Supabase and a fake channel. Unlike
+enqueue, the worker is **cross-user by design** — it drains the whole queue — so it runs on the
+service client.
+
+**The race.** A plain `select pending` then `update sending` lets two overlapping cron invocations
+both read the same row and send it twice. Two defenses:
+
+1. **Conditional-update claim.** The claim is
+   `update … set status='sending' where id = ? and status='pending'` returning the row. Under
+   concurrency exactly one invocation's update matches `status='pending'`; the loser gets zero rows
+   back and skips. This is atomic in Postgres without an explicit lock.
+2. **Lease on `scheduled_for`, not a new column or `SKIP LOCKED`.** On claim, `scheduled_for` is
+   pushed to `now + 10min`. A `sending` row is therefore invisible to the pending query
+   (`scheduled_for <= now`) until its lease expires. Reclaiming a row stranded by a serverless
+   timeout mid-send is then just `update … set status='pending' where status='sending' and
+   scheduled_for <= now` — it falls out of the existing `(status, scheduled_for)` index with **no
+   migration and no `FOR UPDATE SKIP LOCKED`**. For single-cron scale this is deliberately less
+   machinery than a locking dequeue; the conditional update already closes the double-send, and the
+   lease closes the stranded-row hole. If we ever run *concurrent* workers hot enough to contend,
+   `SKIP LOCKED` is the next step — but that's provisioning we don't have.
+
+**Backoff.** `src/lib/notifications/backoff.ts` is pure (asserted in tests): a retryable failure
+reschedules at 1m, 5m, 25m, 2h, then capped at 2h; a non-retryable failure, or the 5th attempt,
+lands `failed` with `last_error`. `resolveOutcome(result, priorAttempts)` is the whole decision,
+so the worker's DB writes are a thin translation of it.
+
+**Idempotency, end to end.** The daily-plan cron enqueues with
+`dedupeKey = daily_plan:<user>:<date>`; the Phase 1 unique index means a re-run of the 04:00 cron
+can't create a second row, and the worker only ever sends `pending` rows, so a second drain of an
+already-`sent` row sends nothing. Both halves are covered by tests.
+
+## Sending-domain prerequisite (SPF/DKIM)
+
+`NOTIFICATIONS_FROM_EMAIL` must be on a domain **verified in Resend**, which means publishing the
+SPF and DKIM DNS records Resend provides. Mail from an unverified domain is unauthenticated;
+Gmail/Outlook route it to spam or reject it outright, and no amount of application code compensates.
+This is deployment config, not code — called out here so "emails aren't arriving" has an obvious
+first thing to check.
+
 ## What breaks first at scale
 
 1. **`notification_deliveries` grows unbounded.** One table for queue + audit means every message
@@ -132,10 +230,10 @@ short-lived, single-use code and is why the code also expires and burns attempts
    job that deletes `sent`/`skipped` rows older than N days (the audit horizon), which is additive
    and needs no schema change. The claim index stays small because it's queried on `status`, and
    `pending` is always a tiny slice.
-2. **The claim query has no `SKIP LOCKED`.** Phase 4's worker will need
-   `... for update skip locked` (or a status-CAS on claim) so multiple concurrent workers don't
-   grab the same row. Single-worker cron is fine until it isn't; the index is already the right
-   shape for it.
+2. **The claim query has no `SKIP LOCKED`.** The conditional-update claim + lease (above) makes the
+   single 5-minute cron safe today. The day we run *concurrent* workers hot enough to contend on
+   the same rows, `for update skip locked` becomes worth its complexity; the `(status,
+   scheduled_for)` index is already the right shape for it.
 3. **Spend counters are per-day rows, not a running ledger.** A rolling-30-day cap sums 30 rows
    per user per channel — fine at this cardinality, and the alternative (scanning
    `notification_deliveries`) is strictly worse. If it ever mattered, a materialized rolling total
@@ -155,10 +253,17 @@ short-lived, single-use code and is why the code also expires and burns attempts
    instant could both compute "I'm first". The partial unique index
    (`notification_contacts_primary_idx`) is the real guard: the second insert fails rather than
    creating a second primary. The count is an optimization, the index is the correctness boundary.
-3. *No inbound path yet.* STOP/HELP for SMS (a legal requirement) and email unsubscribe are Phase 3
-   and beyond. The substrate doesn't preclude them — an inbound webhook flips
-   `notification_preferences.enabled` — but nothing enforces them today, so SMS must not ship
-   before Phase 3 wires compliance.
-4. *`payload jsonb` is unvalidated at the DB.* Each `kind` will want a typed payload; today the
-   shape is a convention between the enqueuing pillar and the Phase 4 template that renders it. A
-   Zod schema per kind (mirroring the tool catalog) is the natural hardening when templates land.
+3. *Inbound is still partial.* Email unsubscribe now ships (signed one-click link + header), but
+   STOP/HELP for SMS — a legal requirement — is Phase 3. The substrate doesn't preclude it (an
+   inbound webhook flips a preference the same way unsubscribe does), but nothing enforces it today,
+   so SMS must not ship before Phase 3 wires compliance.
+4. *`payload jsonb` is unvalidated at the DB, but validated at render.* Each template parses its
+   payload with a Zod schema and throws on a mismatch, which the worker records as a non-retryable
+   `failed` with the parse error in `last_error` — so a malformed payload surfaces loudly instead
+   of sending garbage. The remaining gap is that the mismatch is caught at *send*, not at *enqueue*;
+   validating in `enqueueNotification` per kind would move the failure earlier, to the pillar that
+   caused it.
+5. *A template throw fails the delivery, not the batch.* `renderEmail` is wrapped per row, so one
+   bad payload can't strand the other 49 in a batch — but it also means a systematically broken
+   template (shipped with a bug) fails every affected delivery silently until someone reads the
+   `failed` rows. Phase 5's delivery-log surface is what makes that visible.

@@ -1,17 +1,24 @@
 import { LoggingChannel } from "./channels/logging";
+import { ResendChannel } from "./channels/email";
 import { NotificationChannel, NotificationChannelName } from "./types";
 
 /**
  * Channel name → live implementation, built from env exactly the way
  * createProvider() builds AIProviders. A channel with no configured credentials
  * is simply absent from the map — callers check presence (getChannel !== null)
- * rather than catching construction errors. Phase 2 adds one `email` entry and
- * Phase 3 one `sms` entry; nothing else in this file changes.
+ * rather than catching construction errors. Phase 3 adds one `sms` entry;
+ * nothing else in this file changes.
+ *
+ * NOTIFICATIONS_DRIVER is the single dev/prod switch:
+ *   - `logging` (default): both channels → LoggingChannel (zero-cost, no vendor).
+ *   - `live`: assemble real channels from vendor creds; a channel whose creds
+ *     are missing is absent, so callers degrade instead of crashing.
  */
 export interface NotificationEnv {
-  /** `logging` (default) routes every channel to LoggingChannel. */
   NOTIFICATIONS_DRIVER?: string;
-  // Phase 2/3 read their own vendor keys here (RESEND_API_KEY, TWILIO_*).
+  RESEND_API_KEY?: string;
+  NOTIFICATIONS_FROM_EMAIL?: string;
+  // Phase 3 reads TWILIO_* here.
 }
 
 function buildRegistry(
@@ -25,9 +32,12 @@ function buildRegistry(
     return { email: new LoggingChannel("email"), sms: new LoggingChannel("sms") };
   }
 
-  // Phase 2/3 populate `email`/`sms` from their vendor env here. Until then a
-  // non-logging driver yields an empty registry — callers degrade, not crash.
-  return {};
+  const registry: Partial<Record<NotificationChannelName, NotificationChannel>> = {};
+  if (env.RESEND_API_KEY && env.NOTIFICATIONS_FROM_EMAIL) {
+    registry.email = new ResendChannel(env.RESEND_API_KEY, env.NOTIFICATIONS_FROM_EMAIL);
+  }
+  // Phase 3 adds `registry.sms` from TWILIO_* here.
+  return registry;
 }
 
 let cached: Partial<Record<NotificationChannelName, NotificationChannel>> | null = null;

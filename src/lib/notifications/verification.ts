@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import { SupabaseClient } from "@supabase/supabase-js";
+import { hexEqual, hmacHex } from "./crypto";
 import { getChannel } from "./registry";
+import { renderVerificationCode } from "./templates/verification-code";
 import { NotificationChannelName } from "./types";
 
 /**
@@ -19,19 +21,9 @@ import { NotificationChannelName } from "./types";
  */
 
 const CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const CODE_TTL_MINUTES = 10;
 const MAX_ATTEMPTS = 5;
 const RESEND_COOLDOWN_MS = 60 * 1000; // one code request per contact per minute
-
-/** HMAC key: a dedicated pepper if set, else the app's at-rest key. */
-function verificationSecret(): string {
-  const secret = process.env.NOTIFICATION_SECRET ?? process.env.ENCRYPTION_KEY;
-  if (!secret) {
-    throw new Error(
-      "NOTIFICATION_SECRET (or ENCRYPTION_KEY) is not set — required to hash verification codes",
-    );
-  }
-  return secret;
-}
 
 /** A zero-padded 6-digit code from a CSPRNG (crypto.randomInt is unbiased). */
 export function generateCode(): string {
@@ -40,15 +32,12 @@ export function generateCode(): string {
 
 /** Keyed hash of a code — this, never the code, is what gets stored. */
 export function hashCode(code: string): string {
-  return crypto.createHmac("sha256", verificationSecret()).update(code).digest("hex");
+  return hmacHex(code);
 }
 
 /** Constant-time compare of two hex digests (avoids a length/timing leak). */
 export function hashesEqual(a: string, b: string): boolean {
-  const ba = Buffer.from(a, "hex");
-  const bb = Buffer.from(b, "hex");
-  if (ba.length !== bb.length || ba.length === 0) return false;
-  return crypto.timingSafeEqual(ba, bb);
+  return hexEqual(a, b);
 }
 
 export type CheckOutcome = "ok" | "expired" | "exhausted" | "mismatch" | "no_code";
@@ -160,10 +149,12 @@ export async function startVerification(
     return { ok: false, status: 500, error: "Couldn't save that contact." };
   }
 
+  const email = renderVerificationCode({ code, expiresMinutes: CODE_TTL_MINUTES });
   const result = await send.send({
     to: address,
-    subject: "Your Caffeinatd verification code",
-    body: `Your Caffeinatd verification code is ${code}. It expires in 10 minutes.`,
+    subject: email.subject,
+    body: email.text, // SMS uses this; email adds html below
+    html: email.html,
     idempotencyKey: `verify:${saved.id}:${row.verification_last_sent_at}`,
   });
   if (!result.ok) {
