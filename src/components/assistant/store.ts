@@ -104,19 +104,24 @@ export function askAssistant(message: string): boolean {
     let response: AssistantResponse | null = null;
     let error: string | null = null;
     try {
-      // Backstop above the server's own budget: the companion must never
-      // sit in "thinking" forever if the connection wedges.
+      // Backstop above the server's own budget (route maxDuration 300s):
+      // the companion must never sit in "thinking" forever if the
+      // connection wedges, but must not cut off a slow-but-healthy request.
       const res = await fetch("/api/assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message }),
-        signal: AbortSignal.timeout(90_000),
+        signal: AbortSignal.timeout(300_000),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Something went wrong");
       response = data as AssistantResponse;
     } catch (err) {
-      error = err instanceof Error ? err.message : "Something went wrong";
+      if (err instanceof DOMException && err.name === "TimeoutError") {
+        error = "That took far too long and I stopped waiting — the AI host may be overloaded. Try again in a minute.";
+      } else {
+        error = err instanceof Error ? err.message : "Something went wrong";
+      }
     }
     if (!still()) return;
 

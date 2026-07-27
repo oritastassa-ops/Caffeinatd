@@ -48,6 +48,13 @@ export interface ExecOutcome {
   result: string;
   /** Rendered in the UI as an undoable chip, when the tool mutated state. */
   receipt?: ActionReceipt;
+  /**
+   * A user-ready reply. When a tool that fully answers the request (e.g.
+   * generate_daily_plan) sets this, the pipeline returns it directly instead
+   * of spending another model round-trip re-phrasing the tool result — one
+   * fewer call to fail or time out.
+   */
+  finalText?: string;
 }
 
 /**
@@ -540,6 +547,16 @@ const handlers: { [N in ToolName]: Handler<N> } = {
         tool: "generate_daily_plan",
         label: `Daily plan for ${plan.date}${counts ? ` — ${counts}` : ""}`,
       },
+      // The plan already IS the answer — no need for another model call to
+      // re-phrase it (that extra hop was the flakiest link in "plan my day").
+      finalText: [
+        plan.overview,
+        plan.priorities.length ? `Today's priorities: ${plan.priorities.join("; ")}.` : "",
+        outcomes,
+        `Suggested bedtime: ${plan.bedtime.split(" — ")[0]}.`,
+      ]
+        .filter(Boolean)
+        .join(" "),
     };
   },
 

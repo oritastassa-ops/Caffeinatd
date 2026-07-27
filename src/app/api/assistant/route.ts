@@ -7,8 +7,10 @@ import { ProviderError } from "@/lib/ai/types";
 import { loadProfile, runAssistant } from "@/lib/pipeline/run";
 import { recordExchange } from "@/lib/conversations";
 
-// Room to ride out one Gemini free-tier rate-limit wait (see withRetry).
-export const maxDuration = 60;
+// Must cover the worst legitimate flow: a tool hop plus an in-tool model
+// call on a congested host (adaptive timeouts allow up to ~130s per call).
+// Requires Vercel fluid compute (the default) for >60s.
+export const maxDuration = 300;
 
 const bodySchema = z.object({ message: z.string().min(1).max(2000) });
 

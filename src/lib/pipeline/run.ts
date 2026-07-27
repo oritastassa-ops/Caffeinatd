@@ -11,9 +11,11 @@ const MAX_HOPS = 5;
 /**
  * Wall-clock budget for the reason/act loop. Once spent, the next model call
  * is forced to answer (no tools) instead of exploring further — the user gets
- * a fast reply built on whatever already happened, never a 10-minute think.
+ * a reply built on whatever already happened, never an endless think. Sized
+ * for the worst legitimate flow (tool hop + slow in-tool model call), so a
+ * healthy request is never cut short.
  */
-const TIME_BUDGET_MS = 45_000;
+const TIME_BUDGET_MS = 100_000;
 /** Output cap for reasoning hops: replies are 1–3 sentences, tool args are small JSON. */
 const HOP_MAX_TOKENS = 700;
 
@@ -102,6 +104,8 @@ export async function runAssistant(
     }
 
     messages.push({ role: "assistant", content: res.text, toolCalls: res.toolCalls });
+    let finalText: string | null = null;
+    let hopFailed = false;
     for (const call of res.toolCalls) {
       const key = `${call.name}:${JSON.stringify(call.arguments)}`;
       const cached = executed.get(key);
@@ -115,10 +119,15 @@ export async function runAssistant(
         continue;
       }
       const outcome = await executeToolCall({ supabase, provider, profile }, call);
-      executed.set(key, outcome.result);
       if (outcome.receipt) actions.push(outcome.receipt);
       if (outcome.result.startsWith("Error:")) {
+        hopFailed = true;
         failures.push({ tool: call.name, message: outcome.result.slice("Error:".length).trim() });
+      } else {
+        // Only successes enter the duplicate cache — a transient failure
+        // (timeout, rate limit) deserves one honest retry, not a replay.
+        executed.set(key, outcome.result);
+        if (outcome.finalText) finalText = outcome.finalText;
       }
       messages.push({
         role: "tool",
@@ -126,6 +135,12 @@ export async function runAssistant(
         toolCallId: call.id,
         name: call.name,
       });
+    }
+
+    // A tool produced a user-ready answer and nothing in this hop failed:
+    // deliver it directly instead of asking the model to re-phrase it.
+    if (finalText && !hopFailed) {
+      return { text: finalText, actions, failures };
     }
   }
 
