@@ -43,7 +43,7 @@ export default async function SettingsPage({
   const provider = process.env.AI_PROVIDER ?? "gemini";
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
       <PageHeader title="Settings" />
 
       <Card>

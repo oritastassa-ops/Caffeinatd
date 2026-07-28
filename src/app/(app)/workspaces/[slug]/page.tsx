@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/supabase/server";
 import { fetchWorkspaceContext } from "@/lib/workspaces/data";
 import { Workspace } from "@/lib/types";
-import { Card, CardTitle, EmptyState } from "@/components/ui";
+import { Button, Card, CardTitle, EmptyState, Input } from "@/components/ui";
 import { TaskList } from "@/components/task-list";
 import { NoteCard } from "@/components/note-card";
 import { QuickCapture } from "@/components/quick-capture";
@@ -33,15 +33,13 @@ export default async function WorkspacePage({ params }: { params: Promise<{ slug
   return (
     <div className="flex flex-col gap-4">
       {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div className="card-enter">
-        <div className="flex items-center gap-3">
-          <span aria-hidden className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-soft text-lg text-accent">
-            {workspace.icon}
-          </span>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{workspace.name}</h1>
-            {workspace.description && <p className="text-sm text-text-dim">{workspace.description}</p>}
-          </div>
+      <div className="card-enter flex items-center gap-3">
+        <span aria-hidden className="flex h-10 w-10 items-center justify-center rounded-card bg-accent-soft text-lg text-accent">
+          {workspace.icon}
+        </span>
+        <div className="min-w-0">
+          <h1 className="text-title font-semibold tracking-tight">{workspace.name}</h1>
+          {workspace.description && <p className="text-sm text-text-dim">{workspace.description}</p>}
         </div>
       </div>
 
@@ -65,17 +63,18 @@ export default async function WorkspacePage({ params }: { params: Promise<{ slug
         {/* ── Tasks ─────────────────────────────────────────────────────── */}
         <Card>
           <CardTitle>Tasks · {openTasks.length}</CardTitle>
-          <form action={addTask} className="mb-3 flex gap-2">
+          <form action={addTask} className="mb-3 flex items-end gap-2">
             <input type="hidden" name="workspace_id" value={workspace.id} />
-            <input
+            <Input
               name="title"
+              aria-label={`Add a task to ${workspace.name}`}
               placeholder={`Add to ${workspace.name}…`}
               autoComplete="off"
-              className="flex-1 rounded-lg border bg-surface px-3 py-1.5 text-sm outline-none focus:border-accent"
+              containerClassName="flex-1"
             />
-            <button className="transition-fast rounded-lg bg-accent px-3 text-sm font-medium text-white hover:opacity-90">
+            <Button type="submit" size="sm">
               Add
-            </button>
+            </Button>
           </form>
           {openTasks.length === 0 ? (
             <p className="text-sm text-text-dim">Nothing open in this workspace.</p>
@@ -113,9 +112,9 @@ export default async function WorkspacePage({ params }: { params: Promise<{ slug
         <div className="mb-3 flex items-center justify-between">
           <CardTitle>Notes</CardTitle>
           <form action={createNote.bind(null, workspace.id)}>
-            <button className="transition-fast -mt-3 rounded-lg border px-2.5 py-1 text-xs hover:border-accent hover:text-accent">
+            <Button type="submit" variant="secondary" size="sm">
               New note
-            </button>
+            </Button>
           </form>
         </div>
         {notes.length === 0 ? (

@@ -1,7 +1,6 @@
-import Link from "next/link";
 import { requireUser } from "@/lib/supabase/server";
 import { loadProfile } from "@/lib/pipeline/run";
-import { Card, CardTitle } from "@/components/ui";
+import { Button, Card, CardTitle, Input, LinkButton, PageHeader, Select, Stat } from "@/components/ui";
 import { fetchHomeData } from "@/lib/home/data";
 import { computeChoreStats, isDueOn, nextAssignee, overdueDays } from "@/lib/home/schedule";
 import { collectionStatuses, collectionLabel, nextCollection } from "@/lib/home/collections";
@@ -21,8 +20,8 @@ export default async function HomePage() {
   // ── No household yet: setup card ─────────────────────────────────────────
   if (!data) {
     return (
-      <div className="flex flex-col gap-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Home</h1>
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+        <PageHeader title="Home" />
         <Card className="card-enter border-accent/30 bg-accent-soft/40">
           <p className="text-base font-medium">Set up your household ☕</p>
           <p className="mt-1 text-sm text-text-dim">
@@ -30,27 +29,27 @@ export default async function HomePage() {
             Create a household, or join one with an invite code.
           </p>
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <form action={createHousehold} className="flex gap-2">
-              <input
+            <form action={createHousehold} className="flex items-end gap-2">
+              <Input
                 name="name"
+                aria-label="Household name"
                 placeholder="Household name"
                 autoComplete="off"
-                className="min-w-0 flex-1 rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent"
+                containerClassName="min-w-0 flex-1"
               />
-              <button className="transition-fast rounded-xl bg-accent px-4 text-sm font-medium text-white hover:opacity-90">
-                Create
-              </button>
+              <Button type="submit">Create</Button>
             </form>
-            <form action={joinHousehold} className="flex gap-2">
-              <input
+            <form action={joinHousehold} className="flex items-end gap-2">
+              <Input
                 name="code"
+                aria-label="Invite code"
                 placeholder="Invite code"
                 autoComplete="off"
-                className="min-w-0 flex-1 rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent"
+                containerClassName="min-w-0 flex-1"
               />
-              <button className="transition-fast rounded-xl border px-4 text-sm font-medium hover:border-accent">
+              <Button type="submit" variant="secondary">
                 Join
-              </button>
+              </Button>
             </form>
           </div>
         </Card>
@@ -106,17 +105,19 @@ export default async function HomePage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">{data.household.name}</h1>
-        <div className="flex gap-3 text-sm">
-          <Link href="/home/shopping" className="text-accent hover:underline">
-            Shopping {openItemCount > 0 && `(${openItemCount})`}
-          </Link>
-          <Link href="/home/household" className="text-text-dim hover:text-text hover:underline">
-            Household
-          </Link>
-        </div>
-      </div>
+      <PageHeader
+        title={data.household.name}
+        action={
+          <div className="flex gap-2">
+            <LinkButton href="/home/shopping" variant="secondary" size="sm">
+              Shopping {openItemCount > 0 && `(${openItemCount})`}
+            </LinkButton>
+            <LinkButton href="/home/household" variant="ghost" size="sm">
+              Household
+            </LinkButton>
+          </div>
+        }
+      />
 
       {/* Collections strip */}
       {statuses.length > 0 && (
@@ -124,7 +125,7 @@ export default async function HomePage() {
           {statuses.map((s) => (
             <div
               key={s.type}
-              className="card-enter flex items-center gap-3 rounded-xl border border-accent/30 bg-accent-soft px-4 py-2.5 text-sm"
+              className="card-enter flex items-center gap-3 rounded-card border border-accent/30 bg-accent-soft px-4 py-2.5 text-sm"
             >
               <span aria-hidden>🗑</span>
               <span className="flex-1 font-medium">{s.label}</span>
@@ -150,71 +151,61 @@ export default async function HomePage() {
 
       {/* Glance row */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Card>
-          <CardTitle>This week</CardTitle>
-          <p className="tabular text-2xl font-semibold">{stats.completedThisWeek}</p>
-          <p className="text-xs text-text-dim">chores completed</p>
-        </Card>
-        <Card>
-          <CardTitle>30-day rate</CardTitle>
-          <p className="tabular text-2xl font-semibold">
-            {stats.completionRatePercent !== null ? `${stats.completionRatePercent}%` : "—"}
-          </p>
-          <p className="text-xs text-text-dim">of expected chores done</p>
-        </Card>
-        <Card>
-          <CardTitle>Most active</CardTitle>
-          <p className="truncate text-2xl font-semibold">{mostActive?.name ?? "—"}</p>
-          <p className="text-xs text-text-dim">completions (90d)</p>
-        </Card>
-        <Card>
-          <CardTitle>Shopping</CardTitle>
-          <p className="tabular text-2xl font-semibold">{openItemCount}</p>
-          <p className="text-xs text-text-dim">items across {lists.length} list{lists.length === 1 ? "" : "s"}</p>
-        </Card>
+        <Stat label="This week" value={stats.completedThisWeek} sub="chores completed" />
+        <Stat
+          label="30-day rate"
+          value={stats.completionRatePercent !== null ? `${stats.completionRatePercent}%` : "—"}
+          sub="of expected chores done"
+        />
+        <Stat label="Most active" value={mostActive?.name ?? "—"} sub="completions (90d)" />
+        <Stat
+          label="Shopping"
+          value={openItemCount}
+          sub={`items across ${lists.length} list${lists.length === 1 ? "" : "s"}`}
+        />
       </div>
 
       {/* Add a chore */}
       <Card>
         <CardTitle>Add a chore</CardTitle>
-        <form action={addChore} className="flex flex-wrap gap-2">
-          <input
+        <form action={addChore} className="flex flex-wrap items-end gap-2">
+          <Input
             name="title"
+            aria-label="Chore title"
             placeholder="e.g. Vacuum living room"
             autoComplete="off"
-            className="min-w-[160px] flex-1 rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent"
+            containerClassName="min-w-[160px] flex-1"
           />
-          <select name="cadence" defaultValue="weekly" className={selectCls}>
+          <Select name="cadence" aria-label="Cadence" defaultValue="weekly" containerClassName="w-32">
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
             <option value="monthly">Monthly</option>
             <option value="one_time">One-time</option>
-          </select>
-          <select name="category" defaultValue="other" className={selectCls}>
+          </Select>
+          <Select name="category" aria-label="Category" defaultValue="other" containerClassName="w-32">
             {CHORE_CATEGORIES.map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>
             ))}
-          </select>
-          <select name="assigned_member_id" defaultValue="" className={selectCls}>
+          </Select>
+          <Select name="assigned_member_id" aria-label="Assignee" defaultValue="" containerClassName="w-32">
             <option value="">Anyone</option>
             {members.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name}
               </option>
             ))}
-          </select>
-          <label className="flex items-center gap-1.5 text-xs text-text-dim">
+          </Select>
+          <label className="flex h-11 items-center gap-1.5 text-xs text-text-dim">
             <input type="checkbox" name="rotate" className="accent-[var(--accent)]" /> rotate
           </label>
-          <button className="transition-fast rounded-xl bg-accent px-4 text-sm font-medium text-white hover:opacity-90">
-            Add
-          </button>
+          <Button type="submit">Add</Button>
         </form>
       </Card>
 
-      {/* Upcoming */}
+      {/* Upcoming + activity — parallel lists, side by side on desktop */}
+      <div className="grid gap-4 lg:grid-cols-2">
       {upcoming.length > 0 && (
         <Card>
           <CardTitle>Next 7 days</CardTitle>
@@ -255,8 +246,7 @@ export default async function HomePage() {
           </ul>
         </Card>
       )}
+      </div>
     </div>
   );
 }
-
-const selectCls = "rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent";

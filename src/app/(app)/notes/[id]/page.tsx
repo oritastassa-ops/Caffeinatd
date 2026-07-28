@@ -17,8 +17,8 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
   if (!data) notFound();
 
   return (
-    <div className="flex flex-col gap-4">
-      <Link href="/notes" className="text-sm text-text-dim hover:text-accent">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+      <Link href="/notes" className="transition-fast text-sm text-text-dim hover:text-text">
         ← Notes
       </Link>
       <NoteEditor note={data as Note} workspaces={workspaces} />

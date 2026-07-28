@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
-import Link from "next/link";
 import { requireUser } from "@/lib/supabase/server";
-import { Card, CardTitle } from "@/components/ui";
+import { Card, CardTitle, PageHeader, Stat } from "@/components/ui";
 import { WorkoutAISummary } from "@/components/workout-ai-summary";
 import { loadProfile } from "@/lib/pipeline/run";
 import { fetchSetRows } from "@/lib/fitness/refresh";
@@ -49,30 +48,17 @@ export default async function WorkoutDetailPage({ params }: { params: Promise<{ 
 
   return (
     <div className="flex flex-col gap-4">
-      <Link href="/fitness" className="text-sm text-text-dim hover:text-text">
-        ← Fitness
-      </Link>
+      <PageHeader
+        title={workout.title}
+        back={{ href: "/fitness", label: "Fitness" }}
+        action={<span className="tabular text-sm text-text-dim">{workout.performed_on}</span>}
+      />
 
-      <Card>
-        <div className="flex items-baseline justify-between">
-          <h1 className="text-2xl font-semibold tracking-tight">{workout.title}</h1>
-          <span className="tabular text-sm text-text-dim">{workout.performed_on}</span>
-        </div>
-        <div className="tabular mt-4 grid grid-cols-3 gap-4 text-sm">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">Duration</p>
-            <p className="mt-0.5 text-lg font-medium">{workout.duration_min ? `${workout.duration_min}m` : "—"}</p>
-          </div>
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">Volume</p>
-            <p className="mt-0.5 text-lg font-medium">{formatVolume(totalVolume, unit)}</p>
-          </div>
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">Exercises</p>
-            <p className="mt-0.5 text-lg font-medium">{byExercise.size}</p>
-          </div>
-        </div>
-      </Card>
+      <div className="grid grid-cols-3 gap-4">
+        <Stat label="Duration" value={workout.duration_min ? `${workout.duration_min}m` : "—"} />
+        <Stat label="Volume" value={formatVolume(totalVolume, unit)} />
+        <Stat label="Exercises" value={byExercise.size} />
+      </div>
 
       {prs.length > 0 && (
         <Card className="border-accent/30 bg-accent-soft/40">

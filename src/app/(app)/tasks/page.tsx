@@ -26,7 +26,7 @@ export default async function TasksPage() {
   const done = tasks.filter((t) => t.completed_at).slice(0, 10);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
       <PageHeader title="Tasks" />
 
       <form action={addTask} className="flex gap-2">

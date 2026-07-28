@@ -1,7 +1,7 @@
 import { requireUser } from "@/lib/supabase/server";
 import { loadProfile } from "@/lib/pipeline/run";
 import { Memory } from "@/lib/types";
-import { Card, CardTitle, EmptyState } from "@/components/ui";
+import { Button, Card, CardTitle, EmptyState, Input, PageHeader, Select } from "@/components/ui";
 import { MemoryList } from "@/components/memory-list";
 import { addMemory } from "./actions";
 
@@ -32,44 +32,39 @@ export default async function MemoryPage() {
   })).filter((g) => g.items.length > 0);
 
   return (
-    <div className="flex flex-col gap-4">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">{profile.display_name}'s World</h1>
-        <p className="mt-1 text-sm text-text-dim">
-          Everything the assistant knows about you. Click any line to edit it, or delete it and
-          it's forgotten immediately.
-        </p>
-      </header>
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+      <PageHeader
+        title={`${profile.display_name}'s World`}
+        description="Everything the assistant knows about you. Click any line to edit it, or delete it and it's forgotten immediately."
+      />
 
       <Card>
         <CardTitle>Add something manually</CardTitle>
-        <form action={addMemory} className="flex flex-wrap gap-2">
-          <select
-            name="kind"
-            defaultValue="preference"
-            className="rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent"
-          >
+        <form action={addMemory} className="flex flex-wrap items-end gap-2">
+          <Select name="kind" aria-label="Kind" defaultValue="preference" containerClassName="w-44">
             {SECTIONS.map((s) => (
               <option key={s.kind} value={s.kind}>
                 {s.label}
               </option>
             ))}
-          </select>
-          <input
+          </Select>
+          <Input
             name="content"
+            aria-label="What to remember"
             placeholder="e.g. Favorite food is sushi"
-            className="min-w-[240px] flex-1 rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent"
             autoComplete="off"
+            containerClassName="min-w-[240px] flex-1"
           />
-          <button className="transition-fast rounded-xl bg-accent px-4 text-sm font-medium text-white hover:opacity-90">
-            Add
-          </button>
+          <Button type="submit">Add</Button>
         </form>
       </Card>
 
       {grouped.length === 0 ? (
         <Card>
-          <EmptyState hint='Nothing remembered yet. Facts you share in conversation ("I hate morning meetings") land here.' />
+          <EmptyState
+            title="Your memory is a blank slate"
+            hint="This is what the assistant knows about you — preferences, goals, people, habits. Say “I hate morning meetings” or “my sister’s name is Dana” in ⌘K and it lands here, editable and deletable anytime."
+          />
         </Card>
       ) : (
         grouped.map((g) => (

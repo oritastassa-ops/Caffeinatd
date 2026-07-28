@@ -3,7 +3,7 @@ import { after } from "next/server";
 import { requireUser } from "@/lib/supabase/server";
 import { loadProfile } from "@/lib/pipeline/run";
 import { Workout, WorkoutSet } from "@/lib/types";
-import { Card, CardTitle, EmptyState } from "@/components/ui";
+import { Badge, Button, Card, CardTitle, EmptyState, PageHeader, Stat } from "@/components/ui";
 import { PixelAvatar } from "@/components/avatars/pixel-avatar";
 import { HevyConnectButton } from "@/components/hevy-connect-modal";
 import { IntegrationControls } from "@/components/integration-controls";
@@ -82,14 +82,10 @@ export default async function FitnessPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Fitness Intelligence</h1>
-        {isConnected && (
-          <span className="rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium text-accent">
-            Synced from Hevy
-          </span>
-        )}
-      </div>
+      <PageHeader
+        title="Fitness"
+        action={isConnected ? <Badge tone="accent">Synced from Hevy</Badge> : undefined}
+      />
 
       {showOnboarding && (
         <Card className="border-accent/30 bg-accent-soft/40">
@@ -101,9 +97,9 @@ export default async function FitnessPage() {
           <div className="mt-4 flex gap-2">
             <HevyConnectButton label="Connect Hevy" />
             <form action={dismissFitnessOnboarding}>
-              <button className="rounded-xl border px-4 py-2.5 text-sm text-text-dim hover:text-text">
+              <Button type="submit" variant="secondary" size="sm">
                 Continue without integration
-              </button>
+              </Button>
             </form>
           </div>
         </Card>
@@ -126,66 +122,58 @@ export default async function FitnessPage() {
         </div>
       </Card>
 
-      {/* Recovery status */}
-      <Card>
-        <CardTitle>Muscle recovery</CardTitle>
-        <MuscleRecoveryBars recoveries={recovery} />
-      </Card>
+      {/* Training analytics — dense metric row */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <Stat label="This week" value={thisWeek.length} sub="workouts" />
+        <Stat label="Volume (7d)" value={formatVolume(weekVolume, unit).split(" ")[0] ?? "0"} sub={`${unit} lifted`} />
+        <Stat label="Consistency" value={`${consistency.consistencyPercent}%`} sub={`${consistency.avgPerWeek}/week avg`} />
+        <Stat label="Streak" value={`${consistency.currentStreakWeeks}w`} sub={`longest ${consistency.longestStreakWeeks}w`} />
+      </div>
 
-      {/* Current goals */}
-      <Card>
-        <CardTitle>Goals</CardTitle>
-        <FitnessGoals goals={goals} unit={unit} />
-      </Card>
+      {/* Recovery and PRs are read together — a real two-column pairing. */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardTitle>Muscle recovery</CardTitle>
+          <MuscleRecoveryBars recoveries={recovery} />
+        </Card>
 
-      {/* Progress highlights */}
+        {progressHighlights.length > 0 ? (
+          <Card>
+            <CardTitle>Progress highlights</CardTitle>
+            <ul className="flex flex-col gap-2.5">
+              {progressHighlights.map((m) => (
+                <li key={m.exercise} className="flex items-center justify-between text-sm">
+                  <span>{m.exercise}</span>
+                  <span className="tabular flex items-center gap-2">
+                    <span>{m.estimated_1rm ? `${formatWeight(m.estimated_1rm, unit)} est. 1RM` : "—"}</span>
+                    <span
+                      className={
+                        m.trend.changePercent! > 0 ? "text-good" : m.trend.changePercent! < 0 ? "text-bad" : "text-text-dim"
+                      }
+                    >
+                      {m.trend.changePercent! > 0 ? "+" : ""}
+                      {m.trend.changePercent}%
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        ) : (
+          <Card>
+            <CardTitle>Goals</CardTitle>
+            <FitnessGoals goals={goals} unit={unit} />
+          </Card>
+        )}
+      </div>
+
+      {/* When PRs are shown above, goals gets its own full-width row. */}
       {progressHighlights.length > 0 && (
         <Card>
-          <CardTitle>Progress highlights</CardTitle>
-          <ul className="flex flex-col gap-2.5">
-            {progressHighlights.map((m) => (
-              <li key={m.exercise} className="flex items-center justify-between text-sm">
-                <span>{m.exercise}</span>
-                <span className="tabular flex items-center gap-2">
-                  <span>{m.estimated_1rm ? `${formatWeight(m.estimated_1rm, unit)} est. 1RM` : "—"}</span>
-                  <span
-                    className={
-                      m.trend.changePercent! > 0 ? "text-good" : m.trend.changePercent! < 0 ? "text-bad" : "text-text-dim"
-                    }
-                  >
-                    {m.trend.changePercent! > 0 ? "+" : ""}
-                    {m.trend.changePercent}%
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
+          <CardTitle>Goals</CardTitle>
+          <FitnessGoals goals={goals} unit={unit} />
         </Card>
       )}
-
-      {/* Training analytics */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <Card>
-          <CardTitle>This week</CardTitle>
-          <p className="tabular text-2xl font-semibold">{thisWeek.length}</p>
-          <p className="text-xs text-text-dim">workouts</p>
-        </Card>
-        <Card>
-          <CardTitle>Volume (7d)</CardTitle>
-          <p className="tabular text-2xl font-semibold">{formatVolume(weekVolume, unit).split(" ")[0]}</p>
-          <p className="text-xs text-text-dim">{unit} lifted</p>
-        </Card>
-        <Card>
-          <CardTitle>Consistency</CardTitle>
-          <p className="tabular text-2xl font-semibold">{consistency.consistencyPercent}%</p>
-          <p className="text-xs text-text-dim">{consistency.avgPerWeek}/week avg</p>
-        </Card>
-        <Card>
-          <CardTitle>Streak</CardTitle>
-          <p className="tabular text-2xl font-semibold">{consistency.currentStreakWeeks}w</p>
-          <p className="text-xs text-text-dim">longest {consistency.longestStreakWeeks}w</p>
-        </Card>
-      </div>
 
       {/* Recent workouts */}
       <Card>
@@ -205,9 +193,9 @@ export default async function FitnessPage() {
                     <p className="text-sm font-medium">
                       {w.title}
                       {w.source === "hevy" && (
-                        <span className="ml-2 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-text-dim">
+                        <Badge tone="neutral" className="ml-2">
                           Hevy
-                        </span>
+                        </Badge>
                       )}
                     </p>
                     <span className="tabular text-xs text-text-dim">{w.performed_on}</span>

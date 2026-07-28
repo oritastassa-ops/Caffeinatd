@@ -1,6 +1,5 @@
-import Link from "next/link";
 import { requireUser } from "@/lib/supabase/server";
-import { Card, CardTitle } from "@/components/ui";
+import { Button, Card, CardTitle, Input, PageHeader, Select } from "@/components/ui";
 import { AccountsList } from "@/components/finance/accounts-list";
 import { fetchFinanceData } from "@/lib/finance/data";
 import { money } from "@/lib/finance/format";
@@ -20,27 +19,19 @@ export default async function AccountsPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Accounts</h1>
-        <Link href="/finance" className="text-sm text-text-dim hover:text-text hover:underline">
-          ← Finance
-        </Link>
-      </div>
+      <PageHeader title="Accounts" back={{ href: "/finance", label: "Finance" }} />
 
       <Card>
         <CardTitle>Add account</CardTitle>
-        <form action={addAccount} className="flex flex-wrap gap-2">
-          <input
+        <form action={addAccount} className="flex flex-wrap items-end gap-2">
+          <Input
             name="name"
+            aria-label="Account name"
             placeholder="Name (e.g. Wealthsimple TFSA)"
             autoComplete="off"
-            className="min-w-[180px] flex-1 rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent"
+            containerClassName="min-w-[180px] flex-1"
           />
-          <select
-            name="kind"
-            defaultValue="checking"
-            className="rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent"
-          >
+          <Select name="kind" aria-label="Account type" defaultValue="checking" containerClassName="w-40">
             <optgroup label="Assets">
               {ASSET_KINDS.map((k) => (
                 <option key={k} value={k}>
@@ -55,24 +46,24 @@ export default async function AccountsPage() {
                 </option>
               ))}
             </optgroup>
-          </select>
-          <input
+          </Select>
+          <Input
             name="balance"
+            aria-label="Balance"
             type="number"
             step="0.01"
             placeholder="Balance $"
-            className="w-32 rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent"
+            containerClassName="w-32"
           />
-          <input
+          <Input
             name="expected_return_pct"
+            aria-label="Expected return percent per year"
             type="number"
             step="0.1"
             placeholder="Return %/yr (opt.)"
-            className="w-40 rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent"
+            containerClassName="w-40"
           />
-          <button className="transition-fast rounded-xl bg-accent px-4 text-sm font-medium text-white hover:opacity-90">
-            Add
-          </button>
+          <Button type="submit">Add</Button>
         </form>
         <p className="mt-2 text-xs text-text-dim">
           Set an expected annual return on investment accounts to power goal forecasts and growth
@@ -80,19 +71,17 @@ export default async function AccountsPage() {
         </p>
       </Card>
 
-      <Card>
-        <CardTitle>
-          Assets · {money(nw.assets)}
-        </CardTitle>
-        <AccountsList accounts={assets} />
-      </Card>
-
-      <Card>
-        <CardTitle>
-          Liabilities · {money(nw.liabilities)}
-        </CardTitle>
-        <AccountsList accounts={liabilities} />
-      </Card>
+      {/* Assets and liabilities are parallel — side by side on desktop. */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardTitle>Assets · {money(nw.assets)}</CardTitle>
+          <AccountsList accounts={assets} />
+        </Card>
+        <Card>
+          <CardTitle>Liabilities · {money(nw.liabilities)}</CardTitle>
+          <AccountsList accounts={liabilities} />
+        </Card>
+      </div>
     </div>
   );
 }

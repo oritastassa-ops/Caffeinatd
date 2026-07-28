@@ -1,15 +1,7 @@
 import { cn, formatTime } from "@/lib/utils";
+import { TimelineItem } from "@/lib/dashboard/today";
 
-export interface TimelineItem {
-  /** ISO datetime (or date for all-day). */
-  start: string;
-  end?: string;
-  title: string;
-  /** "event" = calendar, "block" = plan-placed work block. */
-  kind: "event" | "block";
-  sub?: string;
-  allDay?: boolean;
-}
+export type { TimelineItem };
 
 /**
  * The day as a single vertical thread — calendar events and planned work

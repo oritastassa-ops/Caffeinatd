@@ -1,7 +1,7 @@
 import { requireUser } from "@/lib/supabase/server";
 import { fetchWorkspaces } from "@/lib/workspaces/data";
 import { Note } from "@/lib/types";
-import { EmptyState } from "@/components/ui";
+import { Button, EmptyState, PageHeader } from "@/components/ui";
 import { NoteCard } from "@/components/note-card";
 import { createNote } from "./actions";
 
@@ -23,14 +23,16 @@ export default async function NotesPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Notes</h1>
-        <form action={createNote.bind(null, null)}>
-          <button className="transition-fast rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90">
-            New note
-          </button>
-        </form>
-      </div>
+      <PageHeader
+        title="Notes"
+        action={
+          <form action={createNote.bind(null, null)}>
+            <Button type="submit" size="sm">
+              New note
+            </Button>
+          </form>
+        }
+      />
 
       {notes.length === 0 ? (
         <EmptyState
@@ -38,7 +40,7 @@ export default async function NotesPage() {
           hint="Notes live here and inside workspaces. Create one, or press ⌘K anywhere."
         />
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {notes.map((n) => (
             <NoteCard key={n.id} note={n} workspace={n.workspace_id ? workspaceName.get(n.workspace_id) : undefined} />
           ))}

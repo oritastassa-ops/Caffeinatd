@@ -1,8 +1,7 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/supabase/server";
 import { loadProfile } from "@/lib/pipeline/run";
-import { Card, CardTitle } from "@/components/ui";
+import { Button, Card, CardTitle, Input, PageHeader, Select } from "@/components/ui";
 import { fetchHomeData } from "@/lib/home/data";
 import { CollectionsList, InviteCode, MembersList } from "@/components/home/household-manage";
 import { localDateStr } from "@/lib/utils";
@@ -24,13 +23,8 @@ export default async function HouseholdPage() {
   const today = localDateStr(profile.timezone);
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Household</h1>
-        <Link href="/home" className="text-sm text-text-dim hover:text-text hover:underline">
-          ← Home
-        </Link>
-      </div>
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+      <PageHeader title="Household" back={{ href: "/home", label: "Home" }} />
 
       <Card>
         <CardTitle>Invite your partner</CardTitle>
@@ -43,52 +37,49 @@ export default async function HouseholdPage() {
       <Card>
         <CardTitle>Members · {data.members.length}</CardTitle>
         <MembersList members={data.members} />
-        <form action={addMember} className="mt-3 flex gap-2">
-          <input
+        <form action={addMember} className="mt-3 flex items-end gap-2">
+          <Input
             name="name"
+            aria-label="Person's name"
             placeholder="Add a person (no account needed)"
             autoComplete="off"
-            className="min-w-0 flex-1 rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent"
+            containerClassName="min-w-0 flex-1"
           />
-          <select name="color" defaultValue={MEMBER_COLORS[1]} className="rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent">
+          <Select name="color" aria-label="Color" defaultValue={MEMBER_COLORS[1]} containerClassName="w-28">
             {MEMBER_COLORS.map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>
             ))}
-          </select>
-          <button className="transition-fast rounded-xl bg-accent px-4 text-sm font-medium text-white hover:opacity-90">
-            Add
-          </button>
+          </Select>
+          <Button type="submit">Add</Button>
         </form>
       </Card>
 
       <Card>
         <CardTitle>Garbage &amp; recycling</CardTitle>
         <CollectionsList schedules={data.collections} today={today} />
-        <form action={upsertCollectionSchedule} className="mt-3 flex flex-wrap gap-2">
-          <select name="type" defaultValue="garbage" className={selectCls}>
+        <form action={upsertCollectionSchedule} className="mt-3 flex flex-wrap items-end gap-2">
+          <Select name="type" aria-label="Collection type" defaultValue="garbage" containerClassName="w-40">
             {COLLECTION_TYPES.map((t) => (
               <option key={t} value={t}>
                 {collectionLabel(t)}
               </option>
             ))}
-          </select>
-          <select name="day_of_week" defaultValue="2" className={selectCls}>
+          </Select>
+          <Select name="day_of_week" aria-label="Day of week" defaultValue="2" containerClassName="w-36">
             {DAYS.map((d, i) => (
               <option key={d} value={i}>
                 {d}
               </option>
             ))}
-          </select>
-          <select name="frequency" defaultValue="weekly" className={selectCls}>
+          </Select>
+          <Select name="frequency" aria-label="Frequency" defaultValue="weekly" containerClassName="w-32">
             <option value="weekly">Weekly</option>
             <option value="biweekly">Biweekly</option>
             <option value="monthly">Monthly</option>
-          </select>
-          <button className="transition-fast rounded-xl bg-accent px-4 text-sm font-medium text-white hover:opacity-90">
-            Save
-          </button>
+          </Select>
+          <Button type="submit">Save</Button>
         </form>
         <p className="mt-2 text-xs text-text-dim">
           Biweekly and monthly schedules anchor to the week you save them — save during an
@@ -98,5 +89,3 @@ export default async function HouseholdPage() {
     </div>
   );
 }
-
-const selectCls = "rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent";

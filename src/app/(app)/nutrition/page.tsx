@@ -41,7 +41,7 @@ export default async function NutritionPage() {
   const todayKcal = sum(todayMeals, "calories");
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
       <PageHeader title="Nutrition" />
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">

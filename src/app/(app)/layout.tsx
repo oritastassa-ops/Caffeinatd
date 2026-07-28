@@ -30,9 +30,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex min-h-screen">
       <Sidebar workspaces={workspaces} />
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 pb-24 md:px-8 md:pb-8">
+      {/* Wide shell so dashboards can use real horizontal space; text-heavy
+          pages cap themselves (see PageContainer prose width). */}
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 pb-24 md:px-8 md:pb-8">
         {/* Persistent, discoverable assistant entry point on every page. */}
-        <div className="mb-5">
+        <div className="mb-5 max-w-3xl">
           <AssistantTrigger personality={personality} />
         </div>
         {children}

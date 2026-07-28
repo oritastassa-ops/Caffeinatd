@@ -4,18 +4,16 @@ import { requireUser } from "@/lib/supabase/server";
 import { loadProfile } from "@/lib/pipeline/run";
 import { getAccessToken } from "@/lib/google/oauth";
 import { listEvents } from "@/lib/google/calendar";
-import { endOfDayISO, localDateStr, relativeTime, startOfDayISO, zonedTimeToUtc } from "@/lib/utils";
+import { endOfDayISO, localDateStr, startOfDayISO } from "@/lib/utils";
 import { AIConversation, CalendarEvent, Capture, DailyPlan, Insight, Note, Reminder, Task } from "@/lib/types";
-import { Card, CardTitle, EmptyState, PriorityBadge } from "@/components/ui";
+import { Card, CardTitle } from "@/components/ui";
 import { QuickActions } from "@/components/quick-actions";
 import { QuickCapture, CaptureInbox } from "@/components/quick-capture";
-import { Timeline, TimelineItem } from "@/components/timeline";
-import { WorkspaceCard } from "@/components/workspace-card";
-import { NoteCard } from "@/components/note-card";
-import { fetchWorkspaces } from "@/lib/workspaces/data";
+import { Timeline } from "@/components/timeline";
 import { ReadinessCard } from "@/components/readiness-card";
 import { InsightsCard } from "@/components/insights-card";
 import { RemindersStrip } from "@/components/reminders-strip";
+import { fetchWorkspaces } from "@/lib/workspaces/data";
 import { ensureInsights } from "@/lib/insights/generate";
 import { computeReadiness } from "@/lib/planning/readiness";
 import { fetchSetRows } from "@/lib/fitness/refresh";
@@ -27,7 +25,21 @@ import { forecastGoal } from "@/lib/finance/forecast";
 import { fetchHomeData } from "@/lib/home/data";
 import { isDueOn } from "@/lib/home/schedule";
 import { collectionStatuses } from "@/lib/home/collections";
-import { PixelAvatar } from "@/components/avatars/pixel-avatar";
+import {
+  buildTimeline,
+  countOpenTasksByWorkspace,
+  greetingFor,
+  sumMacros,
+} from "@/lib/dashboard/today";
+import { MorningBrief } from "@/components/today/morning-brief";
+import { PillarGlances } from "@/components/today/pillar-glances";
+import { TodayFocus } from "@/components/today/today-focus";
+import { TasksAndDeadlines } from "@/components/today/tasks-and-deadlines";
+import { NutritionGlance } from "@/components/today/nutrition-glance";
+import { QuickNotes } from "@/components/today/quick-notes";
+import { RecentConversations } from "@/components/today/recent-conversations";
+import { WorkspacesSection } from "@/components/today/workspaces-section";
+import { CollectionsBanner } from "@/components/today/collections-banner";
 
 export const dynamic = "force-dynamic";
 
@@ -49,7 +61,6 @@ export default async function TodayPage() {
 
   // Deterministic, no AI call — but it re-reads several pillars (and may hit
   // the Hevy API via sync-if-stale), so it runs *after* the response is sent.
-  // The page renders with today's stored insights; fresh ones appear next load.
   after(() => ensureInsights(supabase, profile).catch(() => null));
 
   const weekAgo = new Date(Date.now() - 28 * 86400_000).toISOString().slice(0, 10);
@@ -103,7 +114,6 @@ export default async function TodayPage() {
     fetchSetRows(supabase, user.id),
   ]);
 
-  // ── Workspace-era context: notes, captures, conversations, deadlines ────
   const in7days = new Date(Date.now() + 7 * 86400_000).toISOString();
   const [{ data: noteRows }, { data: captureRows }, { data: conversationRows }, { data: deadlineRows }, { data: wsTaskRows }, workspaces] =
     await Promise.all([
@@ -130,52 +140,25 @@ export default async function TodayPage() {
       supabase.from("tasks").select("workspace_id").is("completed_at", null).not("workspace_id", "is", null),
       fetchWorkspaces(supabase, user.id),
     ]);
+
   const recentNotes = (noteRows ?? []) as Note[];
   const captures = (captureRows ?? []) as Capture[];
   const conversations = (conversationRows ?? []) as AIConversation[];
   const deadlines = (deadlineRows ?? []) as Task[];
-  const openByWorkspace = new Map<string, number>();
-  for (const row of wsTaskRows ?? []) {
-    const id = row.workspace_id as string;
-    openByWorkspace.set(id, (openByWorkspace.get(id) ?? 0) + 1);
-  }
+  const openByWorkspace = countOpenTasksByWorkspace(
+    (wsTaskRows ?? []) as { workspace_id: string | null }[],
+  );
 
   const plan = planRow?.plan as DailyPlan | undefined;
-
-  // The day as one thread: calendar events + plan-placed blocks, interleaved.
-  const timelineItems: TimelineItem[] = [
-    ...events.map((e) => ({
-      start: e.start,
-      end: e.end,
-      title: e.summary,
-      kind: "event" as const,
-      sub: e.isPrimary ? undefined : e.calendarSummary,
-      allDay: e.allDay,
-    })),
-    ...(plan?.schedule ?? []).map((b) => ({
-      start: zonedTimeToUtc(today, b.start, tz).toISOString(),
-      end: zonedTimeToUtc(today, b.end, tz).toISOString(),
-      title: b.title,
-      kind: "block" as const,
-    })),
-  ];
-  const totals = (meals ?? []).reduce(
-    (acc, m) => ({
-      kcal: acc.kcal + (m.calories ?? 0),
-      p: acc.p + (m.protein_g ?? 0),
-      c: acc.c + (m.carbs_g ?? 0),
-      f: acc.f + (m.fat_g ?? 0),
-    }),
-    { kcal: 0, p: 0, c: 0, f: 0 },
-  );
+  const timelineItems = buildTimeline(events, plan?.schedule, today, tz);
+  const totals = sumMacros(meals ?? []);
   const goal = profile.settings.calorieGoal;
   const proteinGoal = profile.settings.proteinGoal;
 
   const hour = Number(new Date().toLocaleTimeString("en-GB", { timeZone: tz, hour: "2-digit" }));
   const dayOfWeek = new Date().toLocaleDateString("en-US", { timeZone: tz, weekday: "short" });
   const dayIndex = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(dayOfWeek);
-  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
-  const greetingEmoji = hour < 12 ? "☀️" : hour < 18 ? "🌤️" : "🌙";
+  const { greeting, emoji } = greetingFor(hour);
 
   const readiness = computeReadiness({
     overdueTaskCount: overdueCount ?? 0,
@@ -189,7 +172,6 @@ export default async function TodayPage() {
     todayEvents: events,
   });
 
-  // ── Finance glance for the dashboard ────────────────────────────────────
   const financeData = await fetchFinanceData(supabase, user.id);
   const hasFinanceData = financeData.accounts.length > 0 || financeData.transactions.length > 0;
   const financeHealth = hasFinanceData
@@ -202,14 +184,12 @@ export default async function TodayPage() {
       )
     : null;
 
-  // ── Home glance for the dashboard ───────────────────────────────────────
   const homeData = await fetchHomeData(supabase, user.id);
   const choresDueToday = homeData
     ? homeData.chores.filter((c) => isDueOn(c, today, homeData.completions)).length
     : null;
   const homeCollections = homeData ? collectionStatuses(homeData.collections, today) : [];
 
-  // ── Fitness intelligence for the dashboard ──────────────────────────────
   const recovery = computeMuscleRecovery(setRows);
   const recoveryScore = recovery.length
     ? Math.round(recovery.reduce((s, r) => s + r.percent, 0) / recovery.length)
@@ -221,300 +201,114 @@ export default async function TodayPage() {
   const importantCount = openTasks.filter((t) => t.priority <= 2).length;
   const focusItems = plan?.priorities.length ? plan.priorities : openTasks.slice(0, 3).map((t) => t.title);
   const overview = plan?.overview ?? "Here's your day at a glance. Ask me to plan it in detail anytime.";
-
   const dateStr = new Date().toLocaleDateString("en-US", { timeZone: tz, weekday: "long", month: "long", day: "numeric" });
+  const nowISO = new Date().toISOString();
+
+  const briefStats = [
+    { label: "Schedule", value: events.length ? `${events.length} event${events.length > 1 ? "s" : ""}` : "Clear" },
+    { label: "Top focus", value: focusItems[0] ?? "Nothing yet" },
+    { label: "Training", value: workoutRec.label },
+    { label: "Sleep", value: plan?.bedtime ? plan.bedtime.split(" ")[0]! : "—" },
+  ];
+
+  const glances = [
+    { href: "/fitness", title: "Fitness", headline: workoutRec.label, sub: program ? `${program.name} · next session` : "recommended" },
+    {
+      href: "/nutrition",
+      title: "Nutrition",
+      headline: `${totals.p}g${proteinGoal ? ` / ${proteinGoal}g` : ""}`,
+      sub: "protein today",
+      accent: Boolean(proteinGoal && totals.p >= proteinGoal),
+    },
+    {
+      href: "/tasks",
+      title: "Productivity",
+      headline: `${importantCount || openTasks.length}`,
+      sub: importantCount ? "important tasks" : "open tasks",
+    },
+    {
+      href: "/fitness",
+      title: "Recovery",
+      headline: recoveryScore !== null ? `${recoveryScore}%` : "—",
+      sub: recoveryScore !== null ? "avg readiness" : "no data yet",
+      accent: recoveryScore !== null && recoveryScore >= 75,
+    },
+    {
+      href: "/finance",
+      title: "Finance",
+      headline: financeHealth ? `${financeHealth.score}` : "—",
+      sub: financeHealth ? "financial health" : "add accounts",
+      accent: financeHealth !== null && financeHealth.score >= 75,
+    },
+    {
+      href: "/home",
+      title: "Home",
+      headline: choresDueToday !== null ? `${choresDueToday}` : "—",
+      sub: choresDueToday !== null ? "chores due today" : "set up household",
+      accent: choresDueToday === 0,
+    },
+  ];
 
   return (
     <div className="flex flex-col gap-4">
-      {/* ── Morning Brief ────────────────────────────────────────────────── */}
-      <Card className="card-enter border-accent/25 bg-gradient-to-br from-accent-soft/60 to-surface">
-        <p className="text-xs font-medium uppercase tracking-wider text-text-dim">{dateStr}</p>
-        <div className="mt-1 flex items-center gap-3">
-          <PixelAvatar
-            personality={profile.settings.communicationStyle ?? "supportive"}
-            size={40}
-            mode="idle"
-          />
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {greeting}, {profile.display_name} {greetingEmoji}
-          </h1>
-        </div>
-        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-text-dim">{overview}</p>
-        <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <BriefStat label="Schedule" value={events.length ? `${events.length} event${events.length > 1 ? "s" : ""}` : "Clear"} />
-          <BriefStat label="Top focus" value={focusItems[0] ?? "Nothing yet"} />
-          <BriefStat label="Training" value={workoutRec.label} />
-          <BriefStat label="Sleep" value={plan?.bedtime ? plan.bedtime.split(" ")[0]! : "—"} />
-        </div>
-      </Card>
+      <MorningBrief
+        dateStr={dateStr}
+        greeting={greeting}
+        emoji={emoji}
+        displayName={profile.display_name}
+        personality={profile.settings.communicationStyle ?? "supportive"}
+        overview={overview}
+        stats={briefStats}
+      />
 
       <RemindersStrip reminders={(reminderRows as Reminder[] | null) ?? []} tz={tz} />
 
-      {/* ── Quick capture: one line in, triage inline ────────────────────── */}
       <div className="flex flex-col gap-2">
         <QuickCapture />
         <CaptureInbox captures={captures} />
       </div>
 
-      {/* Collections due tonight/today ride the top of the dashboard */}
-      {homeCollections.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {homeCollections.map((s) => (
-            <Link
-              key={s.type}
-              href="/home"
-              className="card-enter flex items-center gap-3 rounded-xl border border-accent/30 bg-accent-soft px-4 py-2.5 text-sm hover:border-accent"
-            >
-              <span aria-hidden>🗑</span>
-              <span className="flex-1 font-medium">{s.label}</span>
-              <span className="tabular text-xs text-text-dim">{s.date.slice(5)}</span>
-            </Link>
-          ))}
+      <CollectionsBanner collections={homeCollections} />
+
+      <PillarGlances glances={glances} />
+
+      {/* Primary spine (the day's plan) prominent; intelligence + macros in a
+          denser right rail. Linearizes top-to-bottom on mobile. */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="flex flex-col gap-4 lg:col-span-2">
+          <Card>
+            <CardTitle>Today&apos;s timeline</CardTitle>
+            {!accessToken && timelineItems.length === 0 ? (
+              <p className="text-sm text-text-dim">
+                <Link href="/settings" className="text-accent hover:underline">
+                  Connect Google Calendar
+                </Link>{" "}
+                to see your day here.
+              </p>
+            ) : (
+              <Timeline items={timelineItems} tz={tz} />
+            )}
+          </Card>
+
+          <TodayFocus items={focusItems} />
+          <TasksAndDeadlines openTasks={openTasks} deadlines={deadlines} nowISO={nowISO} />
         </div>
-      )}
 
-      {/* ── Glanceable insight cards ─────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-        <GlanceCard
-          href="/fitness"
-          title="Fitness"
-          headline={workoutRec.label}
-          sub={program ? `${program.name} · next session` : "recommended"}
-        />
-        <GlanceCard
-          href="/nutrition"
-          title="Nutrition"
-          headline={`${totals.p}g${proteinGoal ? ` / ${proteinGoal}g` : ""}`}
-          sub="protein today"
-          accent={Boolean(proteinGoal && totals.p >= proteinGoal)}
-        />
-        <GlanceCard
-          href="/tasks"
-          title="Productivity"
-          headline={`${importantCount || openTasks.length}`}
-          sub={importantCount ? "important tasks" : "open tasks"}
-        />
-        <GlanceCard
-          href="/fitness"
-          title="Recovery"
-          headline={recoveryScore !== null ? `${recoveryScore}%` : "—"}
-          sub={recoveryScore !== null ? "avg readiness" : "no data yet"}
-          accent={recoveryScore !== null && recoveryScore >= 75}
-        />
-        <GlanceCard
-          href="/finance"
-          title="Finance"
-          headline={financeHealth ? `${financeHealth.score}` : "—"}
-          sub={financeHealth ? "financial health" : "add accounts"}
-          accent={financeHealth !== null && financeHealth.score >= 75}
-        />
-        <GlanceCard
-          href="/home"
-          title="Home"
-          headline={choresDueToday !== null ? `${choresDueToday}` : "—"}
-          sub={choresDueToday !== null ? "chores due today" : "set up household"}
-          accent={choresDueToday === 0}
-        />
+        <div className="flex flex-col gap-4">
+          <ReadinessCard score={readiness.score} reasons={readiness.reasons} />
+          <InsightsCard insights={(insightRows as Insight[] | null) ?? []} />
+          <NutritionGlance totals={totals} goal={goal} />
+          <QuickNotes notes={recentNotes} />
+        </div>
       </div>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <ReadinessCard score={readiness.score} reasons={readiness.reasons} />
-
-        <Card>
-          <CardTitle>Today&apos;s focus</CardTitle>
-          {focusItems.length === 0 ? (
-            <EmptyState title="A fresh cup, a fresh start ☕" hint="Nothing prioritized yet — ask me to plan your day." />
-          ) : (
-            <ol className="flex flex-col gap-2">
-              {focusItems.map((item, i) => (
-                <li key={i} className="flex gap-2.5 text-sm">
-                  <span className="font-semibold text-accent">{i + 1}.</span>
-                  <Link href="/tasks" className="hover:underline">
-                    {item}
-                  </Link>
-                </li>
-              ))}
-            </ol>
-          )}
-        </Card>
-      </div>
-
-      <InsightsCard insights={(insightRows as Insight[] | null) ?? []} />
 
       <Card>
         <CardTitle>Quick actions</CardTitle>
         <QuickActions />
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardTitle>Today&apos;s timeline</CardTitle>
-          {!accessToken && timelineItems.length === 0 ? (
-            <p className="text-sm text-text-dim">
-              <Link href="/settings" className="text-accent hover:underline">
-                Connect Google Calendar
-              </Link>{" "}
-              to see your day here.
-            </p>
-          ) : (
-            <Timeline items={timelineItems} tz={tz} />
-          )}
-        </Card>
-
-        <Card>
-          <CardTitle>Open tasks</CardTitle>
-          {openTasks.length === 0 ? (
-            <p className="text-sm text-text-dim">All clear. Ask me to add something.</p>
-          ) : (
-            <ul className="flex flex-col gap-2.5">
-              {openTasks.map((t) => (
-                <li key={t.id} className="flex items-center gap-2 text-sm">
-                  <PriorityBadge priority={t.priority} />
-                  <span className="truncate">{t.title}</span>
-                  {t.due_at && (
-                    <span className="ml-auto shrink-0 text-xs text-text-dim">{t.due_at.slice(5, 10)}</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-      </div>
-
-      {/* ── Deadlines + quick notes ──────────────────────────────────────── */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardTitle>Upcoming deadlines</CardTitle>
-          {deadlines.length === 0 ? (
-            <p className="text-sm text-text-dim">Nothing due in the next 7 days.</p>
-          ) : (
-            <ul className="flex flex-col gap-2.5">
-              {deadlines.map((t) => {
-                const overdue = t.due_at! < new Date().toISOString();
-                return (
-                  <li key={t.id} className="flex items-center gap-2 text-sm">
-                    <span
-                      aria-hidden
-                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${overdue ? "bg-bad" : "bg-accent"}`}
-                    />
-                    <Link href="/tasks" className="min-w-0 flex-1 truncate hover:underline">
-                      {t.title}
-                    </Link>
-                    <span className={`tabular shrink-0 text-xs ${overdue ? "font-medium text-bad" : "text-text-dim"}`}>
-                      {overdue ? "overdue" : t.due_at!.slice(5, 10)}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </Card>
-
-        <Card>
-          <div className="flex items-baseline justify-between">
-            <CardTitle>Quick notes</CardTitle>
-            <Link href="/notes" className="text-xs text-accent hover:underline">
-              All notes →
-            </Link>
-          </div>
-          {recentNotes.length === 0 ? (
-            <p className="text-sm text-text-dim">
-              No notes yet — <Link href="/notes" className="text-accent hover:underline">start one</Link> or capture above.
-            </p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {recentNotes.map((n) => (
-                <NoteCard key={n.id} note={n} />
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
-
-      {/* ── Workspaces ───────────────────────────────────────────────────── */}
-      {workspaces.length > 0 && (
-        <div>
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-dim">Workspaces</h2>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {workspaces.map((w) => (
-              <WorkspaceCard key={w.id} workspace={w} openTasks={openByWorkspace.get(w.id) ?? 0} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── Recent AI conversations (populated once exchanges persist) ───── */}
-      {conversations.length > 0 && (
-        <Card>
-          <CardTitle>Recent conversations</CardTitle>
-          <ul className="flex flex-col gap-2.5">
-            {conversations.map((c) => (
-              <li key={c.id} className="flex items-center gap-2 text-sm">
-                <span aria-hidden className="text-accent">✦</span>
-                <span className="min-w-0 flex-1 truncate">{c.title}</span>
-                <span className="tabular shrink-0 text-xs text-text-dim">{relativeTime(c.updated_at)}</span>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
-
-      <Card>
-        <CardTitle>Nutrition today</CardTitle>
-        <div className="tabular flex flex-wrap gap-x-8 gap-y-2 text-sm">
-          <Macro label="Calories" value={`${totals.kcal}${goal ? ` / ${goal}` : ""}`} />
-          <Macro label="Protein" value={`${totals.p}g`} />
-          <Macro label="Carbs" value={`${totals.c}g`} />
-          <Macro label="Fat" value={`${totals.f}g`} />
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-function BriefStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">{label}</p>
-      <p className="mt-0.5 truncate text-sm font-medium" title={value}>
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function GlanceCard({
-  href,
-  title,
-  headline,
-  sub,
-  accent,
-}: {
-  href: string;
-  title: string;
-  headline: string;
-  sub: string;
-  accent?: boolean;
-}) {
-  return (
-    <Link
-      href={href}
-      className="transition-fast group rounded-xl border bg-surface p-4 hover:border-accent"
-    >
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">{title}</p>
-      <p className={`mt-1 truncate text-lg font-semibold ${accent ? "text-good" : ""}`} title={headline}>
-        {headline}
-      </p>
-      <p className="text-xs text-text-dim">{sub}</p>
-    </Link>
-  );
-}
-
-function Macro({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">{label}</p>
-      <p className="mt-0.5 text-lg font-medium">{value}</p>
+      <WorkspacesSection workspaces={workspaces} openByWorkspace={openByWorkspace} />
+      <RecentConversations conversations={conversations} />
     </div>
   );
 }

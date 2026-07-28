@@ -1,6 +1,5 @@
-import Link from "next/link";
 import { requireUser } from "@/lib/supabase/server";
-import { Card, CardTitle } from "@/components/ui";
+import { Card, CardTitle, LinkButton, PageHeader, Stat } from "@/components/ui";
 import { fetchFinanceData } from "@/lib/finance/data";
 import { computeNetWorth } from "@/lib/finance/networth";
 import { computeMonthCashflow, computeUpcoming } from "@/lib/finance/cashflow";
@@ -40,17 +39,19 @@ export default async function FinancePage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Finance</h1>
-        <div className="flex gap-3 text-sm">
-          <Link href="/finance/accounts" className="text-text-dim hover:text-text hover:underline">
-            Accounts
-          </Link>
-          <Link href="/finance/simulator" className="text-accent hover:underline">
-            Simulator
-          </Link>
-        </div>
-      </div>
+      <PageHeader
+        title="Finance"
+        action={
+          <div className="flex gap-2">
+            <LinkButton href="/finance/accounts" variant="secondary" size="sm">
+              Accounts
+            </LinkButton>
+            <LinkButton href="/finance/simulator" variant="ghost" size="sm">
+              Simulator
+            </LinkButton>
+          </div>
+        }
+      />
 
       {isEmpty && (
         <Card className="card-enter border-accent/30 bg-accent-soft/40">
@@ -62,12 +63,9 @@ export default async function FinancePage() {
             Add an account below, or just tell me what happened — ⌘K and &ldquo;I spent $12 on
             lunch&rdquo; or &ldquo;I got paid $2,800&rdquo;. I&rsquo;ll take it from there.
           </p>
-          <Link
-            href="/finance/accounts"
-            className="transition-fast mt-4 inline-block rounded-xl bg-accent px-4 py-2.5 text-sm font-medium text-white hover:opacity-90"
-          >
+          <LinkButton href="/finance/accounts" className="mt-4">
             Add your first account
-          </Link>
+          </LinkButton>
         </Card>
       )}
 
@@ -92,29 +90,21 @@ export default async function FinancePage() {
 
       {/* Glance row */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Card>
-          <CardTitle>Cash available</CardTitle>
-          <p className="tabular text-2xl font-semibold">{money(nw.cashAvailable)}</p>
-          {health.emergencyFundMonths !== null && (
-            <p className="text-xs text-text-dim">~{health.emergencyFundMonths.toFixed(1)} months of expenses</p>
-          )}
-        </Card>
-        <Card>
-          <CardTitle>Spent this month</CardTitle>
-          <p className="tabular text-2xl font-semibold">{money(thisMonth.expenses)}</p>
-          {thisMonth.byCategory[0] && (
-            <p className="text-xs text-text-dim">
-              most on {thisMonth.byCategory[0].category} ({money(thisMonth.byCategory[0].amount)})
-            </p>
-          )}
-        </Card>
-        <Card>
-          <CardTitle>Savings rate</CardTitle>
-          <p className="tabular text-2xl font-semibold">{thisMonth.income > 0 ? `${thisMonth.savingsRate}%` : "—"}</p>
-          <p className="text-xs text-text-dim">
-            {thisMonth.income > 0 ? `${money(thisMonth.income)} in this month` : "no income logged yet"}
-          </p>
-        </Card>
+        <Stat
+          label="Cash available"
+          value={money(nw.cashAvailable)}
+          sub={health.emergencyFundMonths !== null ? `~${health.emergencyFundMonths.toFixed(1)} months of expenses` : undefined}
+        />
+        <Stat
+          label="Spent this month"
+          value={money(thisMonth.expenses)}
+          sub={thisMonth.byCategory[0] ? `most on ${thisMonth.byCategory[0].category} (${money(thisMonth.byCategory[0].amount)})` : undefined}
+        />
+        <Stat
+          label="Savings rate"
+          value={thisMonth.income > 0 ? `${thisMonth.savingsRate}%` : "—"}
+          sub={thisMonth.income > 0 ? `${money(thisMonth.income)} in this month` : "no income logged yet"}
+        />
         <FinanceHealthCard score={health.score} factors={health.factors} />
       </div>
 
@@ -135,28 +125,33 @@ export default async function FinancePage() {
         </Card>
       )}
 
-      {/* Goals */}
-      <Card>
-        <CardTitle>Goals</CardTitle>
-        <GoalsList forecasts={forecasts} />
-      </Card>
-
-      {/* Upcoming */}
-      {upcoming.length > 0 && (
+      {/* Goals + upcoming — parallel, side by side when both are present */}
+      {upcoming.length > 0 ? (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card>
+            <CardTitle>Goals</CardTitle>
+            <GoalsList forecasts={forecasts} />
+          </Card>
+          <Card>
+            <CardTitle>Upcoming (14 days)</CardTitle>
+            <ul className="flex flex-col gap-2">
+              {upcoming.map((u, i) => (
+                <li key={i} className="flex items-baseline gap-3 text-sm">
+                  <span className="tabular w-20 shrink-0 text-xs text-text-dim">{u.dueOn.slice(5)}</span>
+                  <span className="min-w-0 flex-1 truncate">{u.description}</span>
+                  <span className={`tabular ${u.direction === "income" ? "text-good" : ""}`}>
+                    {u.direction === "income" ? "+" : "−"}
+                    {money(u.amount)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </div>
+      ) : (
         <Card>
-          <CardTitle>Upcoming (14 days)</CardTitle>
-          <ul className="flex flex-col gap-2">
-            {upcoming.map((u, i) => (
-              <li key={i} className="flex items-baseline gap-3 text-sm">
-                <span className="tabular w-20 shrink-0 text-xs text-text-dim">{u.dueOn.slice(5)}</span>
-                <span className="min-w-0 flex-1 truncate">{u.description}</span>
-                <span className={`tabular ${u.direction === "income" ? "text-good" : ""}`}>
-                  {u.direction === "income" ? "+" : "−"}
-                  {money(u.amount)}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <CardTitle>Goals</CardTitle>
+          <GoalsList forecasts={forecasts} />
         </Card>
       )}
 
