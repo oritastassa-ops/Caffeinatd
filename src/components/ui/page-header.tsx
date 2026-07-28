@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { cn } from "@/lib/utils";
+import { cx } from "./cx";
 
 /**
  * The top of a page: title, optional description, optional action slot, and an
@@ -21,7 +21,7 @@ export function PageHeader({
   className?: string;
 }) {
   return (
-    <div className={cn("flex flex-col gap-2", className)}>
+    <div className={cx("flex flex-col gap-2", className)}>
       {back && (
         <Link href={back.href} className="transition-fast text-sm text-text-dim hover:text-text">
           ← {back.label}

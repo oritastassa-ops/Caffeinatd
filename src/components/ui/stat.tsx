@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { cx } from "./cx";
 import { Card } from "./card";
 
 /**
@@ -27,7 +27,7 @@ export function Stat({
       <p className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">{label}</p>
       <div className="mt-1 flex items-baseline gap-2">
         <p
-          className={cn(
+          className={cx(
             "tabular text-xl font-semibold",
             tone === "bad" && "text-bad",
             tone === "good" && "text-good",
@@ -37,7 +37,7 @@ export function Stat({
         </p>
         {delta && (
           <span
-            className={cn(
+            className={cx(
               "tabular text-xs font-medium",
               delta.tone === "bad" ? "text-bad" : delta.tone === "good" ? "text-good" : "text-text-dim",
             )}

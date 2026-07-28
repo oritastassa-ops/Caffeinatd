@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef } from "react";
-import { cn } from "@/lib/utils";
+import { cx } from "./cx";
 import { ButtonSize, nextSegmentIndex } from "./styles";
 
 const SIZES: Record<ButtonSize, string> = {
@@ -51,7 +51,7 @@ export function SegmentedControl<T extends string>({
     <div
       role="radiogroup"
       aria-label={ariaLabel}
-      className={cn("inline-flex gap-1 rounded-pill border bg-surface-2 p-1", className)}
+      className={cx("inline-flex gap-1 rounded-pill border bg-surface-2 p-1", className)}
     >
       {options.map((o, i) => {
         const selected = i === activeIndex;
@@ -67,7 +67,7 @@ export function SegmentedControl<T extends string>({
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange(o.value)}
             onKeyDown={handleKeyDown}
-            className={cn(
+            className={cx(
               "transition-fast rounded-pill font-medium",
               SIZES[size],
               selected ? "bg-surface text-text" : "text-text-dim hover:text-text",

@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { cx } from "./cx";
 
 /**
  * An UN-boxed titled group — the counterpart to Card. Use it to put a heading
@@ -18,7 +18,7 @@ export function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className={cn("flex flex-col gap-3", className)}>
+    <section className={cx("flex flex-col gap-3", className)}>
       {(title || action) && (
         <div className="flex items-center justify-between">
           {title && (

@@ -4,6 +4,7 @@ import { useTransition } from "react";
 import { FitnessGoal } from "@/lib/types";
 import { WeightUnit, formatWeight } from "@/lib/fitness/units";
 import { addFitnessGoal, removeFitnessGoal } from "@/app/(app)/fitness/actions";
+import { Button, Input } from "@/components/ui";
 
 interface GoalProgress extends FitnessGoal {
   currentWeightKg: number;
@@ -46,23 +47,23 @@ export function FitnessGoals({ goals, unit }: { goals: GoalProgress[]; unit: Wei
         </ul>
       )}
 
-      <form action={addFitnessGoal} className="flex gap-2">
-        <input
+      <form action={addFitnessGoal} className="flex items-end gap-2">
+        <Input
           name="exercise"
+          aria-label="Exercise"
           placeholder="Exercise (e.g. Bench Press)"
-          className="min-w-0 flex-1 rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent"
           autoComplete="off"
+          containerClassName="min-w-0 flex-1"
         />
-        <input
+        <Input
           name="targetWeight"
+          aria-label="Target weight"
           type="number"
           step="any"
           placeholder={`Target ${unit}`}
-          className="w-28 rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent"
+          containerClassName="w-28"
         />
-        <button className="transition-fast rounded-xl bg-accent px-4 text-sm font-medium text-white hover:opacity-90">
-          Add
-        </button>
+        <Button type="submit">Add</Button>
       </form>
     </div>
   );

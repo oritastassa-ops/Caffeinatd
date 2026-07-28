@@ -151,11 +151,13 @@ contract. 18 assertions.
   Verifying it properly means adding jsdom + Testing Library — a dependency and a
   second test environment I chose not to add for one assertion. If component
   rendering tests earn their keep later, that's the trigger.
-- **`cn` doesn't merge conflicting Tailwind classes.** It's a plain join, so a
-  caller passing `className="py-1"` to a `Button` gets both `py-2.5` and `py-1`
-  in the string; which wins is Tailwind's stylesheet order, not source order.
-  I documented "className appended last" but didn't make it *true* in the
-  conflict sense. `tailwind-merge` would fix it — deferred as a dependency call.
+- **~~`cn` doesn't merge conflicting Tailwind classes.~~** *(Fixed.)* The
+  primitives now compose through `cx` (`src/components/ui/cx.ts`), which wraps
+  `tailwind-merge` so a caller's `className` reliably overrides a primitive's
+  defaults — e.g. `Stat` passing `p-4` to a `Card` whose default is `p-5` now
+  resolves to `p-4` instead of leaving both in the string and trusting
+  stylesheet order. The global `cn` in `@/lib/utils` is unchanged (plain join);
+  only the design-system primitives use `cx`, keeping the blast radius small.
 - **Two ways to say some sizes.** `text-title` coexists with `text-2xl`, and
   `rounded-card` with `rounded-xl`, until Phase 13 migrates the other sixteen
   pages. During that window the codebase has both vocabularies; grep for the raw

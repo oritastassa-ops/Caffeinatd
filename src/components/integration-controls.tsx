@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui";
 
 /** "Sync Now" / "Disconnect" pair — shared by the Settings integrations card. */
 export function IntegrationControls({ provider }: { provider: "hevy" }) {
@@ -37,16 +38,12 @@ export function IntegrationControls({ provider }: { provider: "hevy" }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex gap-2">
-        <button
-          onClick={syncNow}
-          disabled={syncing}
-          className="transition-fast rounded-lg border px-3 py-1.5 text-xs font-medium hover:border-accent disabled:opacity-50"
-        >
+        <Button variant="secondary" size="sm" onClick={syncNow} loading={syncing}>
           {syncing ? "Syncing…" : "Sync Now"}
-        </button>
-        <button onClick={disconnect} className="text-xs text-bad hover:underline">
+        </Button>
+        <Button variant="danger" size="sm" onClick={disconnect}>
           Disconnect
-        </button>
+        </Button>
       </div>
       {message && <p className="text-xs text-text-dim">{message}</p>}
     </div>

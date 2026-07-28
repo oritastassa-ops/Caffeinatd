@@ -19,9 +19,9 @@ export function WorkspaceCard({
   return (
     <Link
       href={`/workspaces/${workspace.slug}`}
-      className="transition-fast group flex items-center gap-3 rounded-xl border bg-surface p-4 hover:border-accent"
+      className="transition-fast group flex items-center gap-3 rounded-card border bg-surface p-4 hover:border-accent"
     >
-      <span aria-hidden className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent">
+      <span aria-hidden className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent">
         {workspace.icon}
       </span>
       <div className="min-w-0">

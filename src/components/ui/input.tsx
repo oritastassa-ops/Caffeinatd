@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import { cn } from "@/lib/utils";
+import { cx } from "./cx";
 import { controlClasses, describedBy } from "./styles";
 
 /**
@@ -24,7 +24,7 @@ function FieldShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className={cn("flex flex-col gap-1.5", className)}>
+    <div className={cx("flex flex-col gap-1.5", className)}>
       {label && (
         <label htmlFor={id} className="text-xs font-medium text-text-dim">
           {label}
@@ -118,7 +118,7 @@ export function Textarea({
         name={name}
         aria-invalid={error ? true : undefined}
         aria-describedby={describedById}
-        className={controlClasses(Boolean(error), cn("min-h-20 resize-y", className))}
+        className={controlClasses(Boolean(error), cx("min-h-20 resize-y", className))}
         {...rest}
       />
     </FieldShell>

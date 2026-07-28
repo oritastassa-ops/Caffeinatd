@@ -4,6 +4,7 @@ import { useTransition } from "react";
 import { FinanceTransaction, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "@/lib/types";
 import { moneyExact } from "@/lib/finance/format";
 import { addTransaction, deleteTransaction } from "@/app/(app)/finance/actions";
+import { Button, Input, Select } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 export function TransactionsList({ transactions }: { transactions: FinanceTransaction[] }) {
@@ -11,34 +12,27 @@ export function TransactionsList({ transactions }: { transactions: FinanceTransa
 
   return (
     <div className="flex flex-col gap-4">
-      <form action={addTransaction} className="flex flex-wrap gap-2">
-        <select name="direction" className={selectCls} defaultValue="expense">
+      <form action={addTransaction} className="flex flex-wrap items-end gap-2">
+        <Select name="direction" aria-label="Direction" defaultValue="expense" containerClassName="w-32">
           <option value="expense">Expense</option>
           <option value="income">Income</option>
-        </select>
-        <input
+        </Select>
+        <Input
           name="description"
+          aria-label="Description"
           placeholder="What was it?"
           autoComplete="off"
-          className="min-w-[160px] flex-1 rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent"
+          containerClassName="min-w-[160px] flex-1"
         />
-        <input
-          name="amount"
-          type="number"
-          step="0.01"
-          placeholder="$"
-          className="w-24 rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent"
-        />
-        <select name="category" className={selectCls} defaultValue="food">
+        <Input name="amount" aria-label="Amount" type="number" step="0.01" placeholder="$" containerClassName="w-24" />
+        <Select name="category" aria-label="Category" defaultValue="food" containerClassName="w-36">
           {[...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES.filter((c) => c !== "other")].map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
           ))}
-        </select>
-        <button className="transition-fast rounded-xl bg-accent px-4 text-sm font-medium text-white hover:opacity-90">
-          Add
-        </button>
+        </Select>
+        <Button type="submit">Add</Button>
       </form>
 
       {transactions.length === 0 ? (
@@ -75,5 +69,3 @@ export function TransactionsList({ transactions }: { transactions: FinanceTransa
     </div>
   );
 }
-
-const selectCls = "rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent";

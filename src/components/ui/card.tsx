@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { cx } from "./cx";
 
 /** A boxed, border-only surface. The default container for grouped content. */
 export function Card({
@@ -9,7 +9,7 @@ export function Card({
   className?: string;
 }) {
   return (
-    <section className={cn("rounded-card border bg-surface p-5", className)}>{children}</section>
+    <section className={cx("rounded-card border bg-surface p-5", className)}>{children}</section>
   );
 }
 

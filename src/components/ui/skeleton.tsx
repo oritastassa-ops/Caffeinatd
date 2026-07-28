@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { cx } from "./cx";
 
 /**
  * A pulsing placeholder block. Compose several to sketch a loading surface in
@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 export function Skeleton({ className }: { className?: string }) {
   return (
     <div
-      className={cn(
+      className={cx(
         "animate-pulse rounded-control bg-surface-2 motion-reduce:animate-none",
         className,
       )}

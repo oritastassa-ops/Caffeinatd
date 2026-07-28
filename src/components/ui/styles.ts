@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { cx } from "./cx";
 
 /**
  * Pure class-mapping and small state logic for the primitives, kept JSX-free so
@@ -38,7 +38,7 @@ export function buttonClasses(
   size: ButtonSize = "md",
   className?: string,
 ): string {
-  return cn(BUTTON_BASE, BUTTON_VARIANTS[variant], BUTTON_SIZES[size], className);
+  return cx(BUTTON_BASE, BUTTON_VARIANTS[variant], BUTTON_SIZES[size], className);
 }
 
 /**
@@ -58,7 +58,7 @@ export function buttonState({
 // ── Inputs ───────────────────────────────────────────────────────────────────
 
 export function controlClasses(hasError?: boolean, className?: string): string {
-  return cn(
+  return cx(
     // py matches Button size md so an input and a button line up in a row.
     "w-full rounded-control border bg-surface-2 px-3 py-2.5 text-sm outline-none",
     "transition-fast placeholder:text-text-dim focus:border-accent",
@@ -97,7 +97,7 @@ const BADGE_TONES: Record<BadgeTone, string> = {
 };
 
 export function badgeClasses(tone: BadgeTone = "neutral", className?: string): string {
-  return cn(
+  return cx(
     "inline-flex items-center rounded-pill px-1.5 py-0.5 text-[11px] font-medium",
     BADGE_TONES[tone],
     className,

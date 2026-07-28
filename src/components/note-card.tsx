@@ -8,7 +8,7 @@ export function NoteCard({ note, workspace }: { note: Note; workspace?: string }
   return (
     <Link
       href={`/notes/${note.id}`}
-      className="transition-fast group flex flex-col gap-1.5 rounded-xl border bg-surface p-4 hover:border-accent"
+      className="transition-fast group flex flex-col gap-1.5 rounded-card border bg-surface p-4 hover:border-accent"
     >
       <div className="flex items-center gap-2">
         {note.pinned && <span aria-hidden className="text-xs text-accent">★</span>}

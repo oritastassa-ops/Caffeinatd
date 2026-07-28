@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "@/components/ui";
 
 export function WorkoutAISummary({ workoutId, initialSummary }: { workoutId: string; initialSummary: string | null }) {
   const [summary, setSummary] = useState(initialSummary);
@@ -28,13 +29,9 @@ export function WorkoutAISummary({ workoutId, initialSummary }: { workoutId: str
 
   return (
     <div className="flex flex-col gap-2">
-      <button
-        onClick={generate}
-        disabled={loading}
-        className="transition-fast self-start rounded-xl border px-4 py-2 text-sm font-medium hover:border-accent disabled:opacity-50"
-      >
+      <Button variant="secondary" size="sm" className="self-start" onClick={generate} loading={loading}>
         {loading ? "Generating…" : "Generate summary"}
-      </button>
+      </Button>
       {error && <p className="text-xs text-bad">{error}</p>}
     </div>
   );
