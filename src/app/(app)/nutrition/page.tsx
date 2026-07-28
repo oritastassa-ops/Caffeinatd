@@ -2,7 +2,7 @@ import { requireUser } from "@/lib/supabase/server";
 import { loadProfile } from "@/lib/pipeline/run";
 import { endOfDayISO, formatTime, localDateStr, startOfDayISO } from "@/lib/utils";
 import { Meal } from "@/lib/types";
-import { Card, CardTitle, EmptyState } from "@/components/ui";
+import { Card, CardTitle, EmptyState, PageHeader, Stat } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -42,12 +42,25 @@ export default async function NutritionPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Nutrition</h1>
+      <PageHeader title="Nutrition" />
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <Stat label="Today" value={`${todayKcal}`} sub={goal ? `of ${goal} kcal` : "kcal"} over={Boolean(goal && todayKcal > goal)} />
-        <Stat label="Protein" value={`${sum(todayMeals, "protein_g")}g`} sub={profile.settings.proteinGoal ? `of ${profile.settings.proteinGoal}g` : "today"} />
-        <Stat label="Carbs · Fat" value={`${sum(todayMeals, "carbs_g")} · ${sum(todayMeals, "fat_g")}g`} sub="today" />
+        <Stat
+          label="Today"
+          value={`${todayKcal}`}
+          sub={goal ? `of ${goal} kcal` : "kcal"}
+          tone={goal && todayKcal > goal ? "bad" : "default"}
+        />
+        <Stat
+          label="Protein"
+          value={`${sum(todayMeals, "protein_g")}g`}
+          sub={profile.settings.proteinGoal ? `of ${profile.settings.proteinGoal}g` : "today"}
+        />
+        <Stat
+          label="Carbs · Fat"
+          value={`${sum(todayMeals, "carbs_g")} · ${sum(todayMeals, "fat_g")}g`}
+          sub="today"
+        />
         <Stat label="7-day avg" value={`${avg}`} sub="kcal / logged day" />
       </div>
 
@@ -75,15 +88,5 @@ export default async function NutritionPage() {
         )}
       </Card>
     </div>
-  );
-}
-
-function Stat({ label, value, sub, over }: { label: string; value: string; sub: string; over?: boolean }) {
-  return (
-    <Card className="p-4">
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-text-dim">{label}</p>
-      <p className={`tabular mt-1 text-xl font-semibold ${over ? "text-bad" : ""}`}>{value}</p>
-      <p className="text-xs text-text-dim">{sub}</p>
-    </Card>
   );
 }

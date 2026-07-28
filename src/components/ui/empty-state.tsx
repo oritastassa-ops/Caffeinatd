@@ -1,47 +1,5 @@
-import { cn } from "@/lib/utils";
 import { CommunicationStyle } from "@/lib/types";
-import { PixelAvatar } from "./avatars/pixel-avatar";
-
-export function Card({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <section className={cn("rounded-xl border bg-surface p-5", className)}>{children}</section>
-  );
-}
-
-export function CardTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-text-dim">
-      {children}
-    </h2>
-  );
-}
-
-const PRIORITY_STYLES: Record<number, string> = {
-  1: "bg-bad/10 text-bad",
-  2: "bg-accent-soft text-accent",
-  3: "bg-surface-2 text-text-dim",
-  4: "bg-surface-2 text-text-dim",
-};
-
-export function PriorityBadge({ priority }: { priority: number }) {
-  const label = ["", "Urgent", "High", "Normal", "Low"][priority] ?? "Normal";
-  return (
-    <span
-      className={cn(
-        "rounded-md px-1.5 py-0.5 text-[11px] font-medium",
-        PRIORITY_STYLES[priority] ?? PRIORITY_STYLES[3],
-      )}
-    >
-      {label}
-    </span>
-  );
-}
+import { PixelAvatar } from "../avatars/pixel-avatar";
 
 /**
  * Empty states are hosted by a cast member when `character` is set —

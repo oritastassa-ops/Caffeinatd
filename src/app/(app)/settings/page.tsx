@@ -1,7 +1,6 @@
-import Link from "next/link";
 import { requireUser } from "@/lib/supabase/server";
 import { loadProfile } from "@/lib/pipeline/run";
-import { Card, CardTitle } from "@/components/ui";
+import { Button, Card, CardTitle, Input, LinkButton, PageHeader, Select } from "@/components/ui";
 import { HevyConnectButton } from "@/components/hevy-connect-modal";
 import { IntegrationControls } from "@/components/integration-controls";
 import { relativeTime } from "@/lib/utils";
@@ -45,81 +44,88 @@ export default async function SettingsPage({
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+      <PageHeader title="Settings" />
 
       <Card>
         <CardTitle>Profile & goals</CardTitle>
         <form action={updateProfile} className="grid gap-4 sm:grid-cols-2">
-          <Field label="Name">
-            <input name="display_name" defaultValue={profile.display_name} className={inputCls} />
-          </Field>
-          <Field label="Timezone">
-            <select name="timezone" defaultValue={profile.timezone} className={inputCls}>
-              {[profile.timezone, ...COMMON_TIMEZONES.filter((t) => t !== profile.timezone)].map(
-                (tzOption) => (
-                  <option key={tzOption} value={tzOption}>
-                    {tzOption}
-                  </option>
-                ),
-              )}
-            </select>
-          </Field>
-          <Field label="Calorie goal (kcal/day)">
-            <input name="calorieGoal" type="number" defaultValue={profile.settings.calorieGoal ?? ""} className={inputCls} />
-          </Field>
-          <Field label="Protein goal (g/day)">
-            <input name="proteinGoal" type="number" defaultValue={profile.settings.proteinGoal ?? ""} className={inputCls} />
-          </Field>
-          <Field label="Sleep target (hours)">
-            <input name="sleepHours" type="number" step="0.5" defaultValue={profile.settings.sleepHours ?? 8} className={inputCls} />
-          </Field>
-          <Field label="Wind-down (minutes)">
-            <input name="windDownMinutes" type="number" defaultValue={profile.settings.windDownMinutes ?? 30} className={inputCls} />
-          </Field>
-          <Field label="Workouts per week (target)">
-            <input name="weeklyWorkoutTarget" type="number" defaultValue={profile.settings.weeklyWorkoutTarget ?? 3} className={inputCls} />
-          </Field>
+          <Input label="Name" name="display_name" defaultValue={profile.display_name} />
+          <Select label="Timezone" name="timezone" defaultValue={profile.timezone}>
+            {[profile.timezone, ...COMMON_TIMEZONES.filter((t) => t !== profile.timezone)].map(
+              (tzOption) => (
+                <option key={tzOption} value={tzOption}>
+                  {tzOption}
+                </option>
+              ),
+            )}
+          </Select>
+          <Input
+            label="Calorie goal (kcal/day)"
+            name="calorieGoal"
+            type="number"
+            defaultValue={profile.settings.calorieGoal ?? ""}
+          />
+          <Input
+            label="Protein goal (g/day)"
+            name="proteinGoal"
+            type="number"
+            defaultValue={profile.settings.proteinGoal ?? ""}
+          />
+          <Input
+            label="Sleep target (hours)"
+            name="sleepHours"
+            type="number"
+            step="0.5"
+            defaultValue={profile.settings.sleepHours ?? 8}
+          />
+          <Input
+            label="Wind-down (minutes)"
+            name="windDownMinutes"
+            type="number"
+            defaultValue={profile.settings.windDownMinutes ?? 30}
+          />
+          <Input
+            label="Workouts per week (target)"
+            name="weeklyWorkoutTarget"
+            type="number"
+            defaultValue={profile.settings.weeklyWorkoutTarget ?? 3}
+          />
           <div className="sm:col-span-2">
             <p className="mb-2 text-xs font-medium text-text-dim">AI personality</p>
             <PersonalityPicker defaultValue={profile.settings.communicationStyle ?? "supportive"} />
           </div>
-          <Field label="Weight unit">
-            <select name="weightUnit" defaultValue={profile.settings.weightUnit ?? "kg"} className={inputCls}>
-              <option value="kg">Kilograms (kg)</option>
-              <option value="lbs">Pounds (lbs)</option>
-            </select>
-          </Field>
-          <Field label="Training split">
-            <select name="trainingProgramId" defaultValue={profile.settings.trainingProgramId ?? ""} className={inputCls}>
-              <option value="">None</option>
-              {PROGRAMS.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-              <option value="custom">Custom</option>
-            </select>
-          </Field>
+          <Select label="Weight unit" name="weightUnit" defaultValue={profile.settings.weightUnit ?? "kg"}>
+            <option value="kg">Kilograms (kg)</option>
+            <option value="lbs">Pounds (lbs)</option>
+          </Select>
+          <Select
+            label="Training split"
+            name="trainingProgramId"
+            defaultValue={profile.settings.trainingProgramId ?? ""}
+          >
+            <option value="">None</option>
+            {PROGRAMS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+            <option value="custom">Custom</option>
+          </Select>
           <div className="sm:col-span-2">
-            <button className="transition-fast rounded-xl bg-accent px-4 py-2.5 text-sm font-medium text-white hover:opacity-90">
-              Save
-            </button>
+            <Button type="submit">Save</Button>
           </div>
         </form>
       </Card>
 
       <Card>
         <CardTitle>Notifications</CardTitle>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-4">
           <p className="text-sm text-text-dim">
             Manage contacts, choose channels per notification, quiet hours, and send a test message.
           </p>
-          <Link
-            href="/settings/notifications"
-            className="transition-fast shrink-0 rounded-xl border px-4 py-2 text-sm font-medium hover:border-accent"
-          >
+          <LinkButton href="/settings/notifications" variant="secondary" size="sm" className="shrink-0">
             Manage
-          </Link>
+          </LinkButton>
         </div>
       </Card>
 
@@ -129,27 +135,24 @@ export default async function SettingsPage({
           <p className="mb-3 text-sm text-bad">Connection didn’t complete ({calendar}). Try again.</p>
         )}
         {token ? (
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-4">
             <p className="text-sm">
               <span className="text-good">●</span> Connected
             </p>
             <form action={disconnectCalendar}>
-              <button className="text-sm text-bad hover:underline">Disconnect</button>
+              <Button type="submit" variant="danger" size="sm">
+                Disconnect
+              </Button>
             </form>
           </div>
         ) : (
-          <Link
-            href="/api/google/auth"
-            className="transition-fast inline-block rounded-xl bg-accent px-4 py-2.5 text-sm font-medium text-white hover:opacity-90"
-          >
-            Connect Google Calendar
-          </Link>
+          <LinkButton href="/api/google/auth">Connect Google Calendar</LinkButton>
         )}
       </Card>
 
       <Card>
         <CardTitle>Fitness integrations</CardTitle>
-        <div className="flex items-center justify-between rounded-xl border bg-surface-2 p-3">
+        <div className="flex items-center justify-between rounded-card border bg-surface-2 p-3">
           <div>
             <p className="text-sm font-medium">Hevy</p>
             {hevy ? (
@@ -191,22 +194,12 @@ export default async function SettingsPage({
             Export everything (JSON)
           </a>
           <form action={signOut}>
-            <button className="text-sm text-text-dim hover:text-bad hover:underline">Sign out</button>
+            <Button type="submit" variant="danger" size="sm">
+              Sign out
+            </Button>
           </form>
         </div>
       </Card>
     </div>
-  );
-}
-
-const inputCls =
-  "w-full rounded-xl border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-accent";
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="flex flex-col gap-1.5">
-      <span className="text-xs font-medium text-text-dim">{label}</span>
-      {children}
-    </label>
   );
 }

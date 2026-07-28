@@ -46,6 +46,39 @@
   --color-good: var(--good);
   --color-bad: var(--bad);
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  /* ── Radius scale — every rounded thing picks one of three ────────────────
+     control < card is deliberate (Linear/Stripe do this): interactive controls
+     read tighter than the panels that hold them. */
+  --radius-control: 0.5rem;  /* 8px  — buttons, inputs, selects, checkboxes  */
+  --radius-card: 0.75rem;    /* 12px — cards, panels, dialogs (was rounded-xl)*/
+  --radius-pill: 9999px;     /* badges, chips, segmented control             */
+
+  /* ── Elevation ────────────────────────────────────────────────────────────
+     In-flow surfaces are BORDER-ONLY (a neutral drop-shadow reads as dirt on a
+     warm cream palette). This one shadow is reserved for genuinely floating
+     layers — the ⌘K palette, dropdowns, toasts, the companion bubble — and is
+     tinted with the bean brown so it warms rather than smudges. */
+  --shadow-overlay: 0 12px 32px -8px color-mix(in srgb, var(--bean) 28%, transparent);
+
+  /* ── Type ramp — semantic sizes the primitives own, so pages stop
+     copy-pasting `text-2xl font-semibold tracking-tight`. body/label/caption
+     stay as text-sm / text-xs / text-[11px], applied via primitives. */
+  --text-title: 1.5rem;        /* PageHeader h1 */
+  --text-title--line-height: 1.2;
+  --text-heading: 1.125rem;    /* sub-headings within a page */
+  --text-heading--line-height: 1.4;
+
+  /* Shared easing for anything that isn't a spring entrance. */
+  --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Motion durations — fast/base/slow, one easing. Not a Tailwind namespace, so
+   they live here and drive the .transition-* utilities below. */
+:root {
+  --motion-fast: 150ms;
+  --motion-base: 200ms;
+  --motion-slow: 300ms;
 }
 
 html {
@@ -69,7 +102,7 @@ html {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
 }
 
 /* Overlay + micro-transitions (150–200ms ease-out, per UX spec) */
@@ -144,8 +177,16 @@ html {
   }
 }
 
+/* Motion utilities — pick fast for hover/press feedback, base for state
+   changes, slow for larger moves. Reduced-motion collapses them below. */
 .transition-fast {
-  transition: all 150ms ease-out;
+  transition: all var(--motion-fast) ease-out;
+}
+.transition-base {
+  transition: all var(--motion-base) ease-out;
+}
+.transition-slow {
+  transition: all var(--motion-slow) var(--ease-standard);
 }
 
 .tabular {
@@ -257,4 +298,8 @@ html {
   }
   /* Z's would be invisible without their animation — show them statically. */
   .companion-zzz { opacity: 0.6; }
+  /* Collapse transitions to a hair rather than 0 so state still commits. */
+  .transition-fast,
+  .transition-base,
+  .transition-slow { transition-duration: 0.01ms; }
 }

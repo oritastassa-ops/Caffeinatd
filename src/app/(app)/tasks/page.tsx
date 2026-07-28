@@ -1,7 +1,7 @@
 import { requireUser } from "@/lib/supabase/server";
 import { loadProfile } from "@/lib/pipeline/run";
 import { Task } from "@/lib/types";
-import { Card, CardTitle, EmptyState } from "@/components/ui";
+import { Button, Card, CardTitle, EmptyState, Input, PageHeader } from "@/components/ui";
 import { TaskList } from "@/components/task-list";
 import { DEFAULT_PERSONALITY, PERSONALITIES } from "@/lib/personalities";
 import { addTask } from "./actions";
@@ -27,18 +27,17 @@ export default async function TasksPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
+      <PageHeader title="Tasks" />
 
       <form action={addTask} className="flex gap-2">
-        <input
+        <Input
           name="title"
+          aria-label="Quick add task"
           placeholder="Quick add… (or ⌘K for natural language)"
-          className="flex-1 rounded-xl border bg-surface px-4 py-2.5 text-sm outline-none focus:border-accent"
           autoComplete="off"
+          containerClassName="flex-1"
         />
-        <button className="transition-fast rounded-xl bg-accent px-4 text-sm font-medium text-white hover:opacity-90">
-          Add
-        </button>
+        <Button type="submit">Add</Button>
       </form>
 
       <Card>
