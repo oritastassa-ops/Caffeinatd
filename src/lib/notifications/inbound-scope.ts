@@ -67,6 +67,7 @@ export const INBOUND_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   "remove_shopping_item",
   "set_collection_schedule",
   "generate_daily_plan",
+  "replan_today",
 ]);
 
 export function isInboundTool(name: string): name is ToolName {

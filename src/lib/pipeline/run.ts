@@ -6,6 +6,7 @@ import { reachableChannels } from "@/lib/notifications/settings-data";
 import { DEFAULT_PERSONALITY, PERSONALITIES } from "@/lib/personalities";
 import { getToolDefs, ToolName } from "./tools";
 import { executeToolCall } from "./executor";
+import { buildSituationBrief } from "./context";
 
 export interface RunOptions {
   /**
@@ -40,12 +41,19 @@ export async function runAssistant(
   userMessage: string,
   options: RunOptions = {},
 ): Promise<AssistantResponse> {
-  const memories = await recallMemories(supabase, provider, profile.id, userMessage);
-  // Which channels can actually reach this user right now — so the assistant
-  // stops offering to text someone with no verified number. Best-effort.
-  const reachable = await reachableChannels(supabase, profile.id).catch(() => [] as string[]);
-
   const now = new Date();
+
+  // One parallel round trip for all ambient context: recalled memories, the
+  // channels that can actually reach the user, and the situation brief (today's
+  // plan, calendar, top tasks, readiness, goals). The brief is what lets the
+  // most common questions answer in one hop instead of spending a read tool.
+  // Each is best-effort — a failure degrades that block, never the whole reply.
+  const [memories, reachable, brief] = await Promise.all([
+    recallMemories(supabase, provider, profile.id, userMessage),
+    reachableChannels(supabase, profile.id).catch(() => [] as string[]),
+    buildSituationBrief(supabase, profile, { now }).catch(() => ""),
+  ]);
+
   const localNow = now.toLocaleString("en-US", {
     timeZone: profile.timezone,
     weekday: "long",
@@ -64,8 +72,13 @@ export async function runAssistant(
     `You are ${personality.name}, ${profile.display_name}'s personal secretary in the Caffeinatd app. You act, you don't chat.`,
     `Current local time: ${localNow} (timezone ${profile.timezone}).`,
     personality.persona,
+    brief
+      ? `${profile.display_name}'s situation right now — treat this as ground truth and answer from it directly, no tool call needed:\n${brief}`
+      : "",
     `Rules:`,
+    `- You ALREADY KNOW today's picture from the situation brief above (today's plan, today's and tomorrow's calendar, top open tasks, readiness, goals). Answer questions about today or tomorrow — "what's my day", "am I free at 3", "what should I do now", "what's on my calendar" — STRAIGHT from the brief, with no tool call. Only call get_agenda for OTHER dates, or to fetch an event id you need in order to modify or delete an event.`,
     `- Resolve every actionable request into tool calls. "I need groceries" → create_task. "I ate X" → log_meal with YOUR macro estimates. Relative dates ("Thursday", "tomorrow") resolve against the current local time above.`,
+    `- When the day has changed — a meeting ran long, a workout was skipped, a deadline moved — and the user wants their remaining time reorganized, call replan_today. It places the remaining priorities into the real free gaps deterministically; you only relay the result.`,
     `- When the user directly states a durable fact about themselves (preference, relationship, routine, goal), call save_memory — it saves immediately, no confirmation needed.`,
     `- When YOU infer a pattern rather than being told it directly (e.g. noticing a habit from their logged data), call suggest_memory instead — it asks the user to confirm before saving, since an inference can be wrong.`,
     `- Never invent calendar event ids; fetch them with get_agenda first.`,

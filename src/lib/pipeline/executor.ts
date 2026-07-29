@@ -17,6 +17,7 @@ import {
 } from "@/lib/google/calendar";
 import { generateDailyPlan } from "@/lib/planning/daily";
 import { recommendSleep } from "@/lib/planning/sleep";
+import { busyIntervals, freeWindows, hhmmToMin, minToHHMM, placeBlocks } from "@/lib/planning/place-blocks";
 import { buildFitnessReport } from "@/lib/fitness/report";
 import { recomputeFitnessMetrics } from "@/lib/fitness/refresh";
 import { buildFinanceReport } from "@/lib/finance/report";
@@ -574,6 +575,75 @@ const handlers: { [N in ToolName]: Handler<N> } = {
       ]
         .filter(Boolean)
         .join(" "),
+    };
+  },
+
+  async replan_today(ctx, args) {
+    const tz = ctx.profile.timezone;
+    const token = await calendarToken(ctx);
+    const today = localDateStr(tz);
+
+    // "Now" as local minutes-from-midnight — the earliest we'll place anything,
+    // so a mid-day re-plan never schedules into the past.
+    const nowHHMM = new Date().toLocaleTimeString("en-GB", {
+      timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false,
+    });
+    const nowMin = hhmmToMin(nowHHMM);
+    const endMin = args.until ? hhmmToMin(args.until) : 22 * 60;
+    if (endMin - nowMin < 30) {
+      return { result: "There's no meaningful time left in the day to re-plan. Tell the user the day is essentially over." };
+    }
+
+    // Deterministic placement: real events → busy → free gaps → blocks. The
+    // model never chooses times (CLAUDE.md: deterministic math, LLM phrasing).
+    const events = await listEvents(token, startOfDayISO(today, tz), endOfDayISO(today, tz), ctx.profile.id);
+    const windows = freeWindows(busyIntervals(events, tz, today), nowMin, endMin, nowMin, 30);
+    if (windows.length === 0) {
+      return { result: `No free gaps between ${minToHHMM(nowMin)} and ${minToHHMM(endMin)} — the rest of the day is fully booked. Tell the user and suggest moving or dropping something.` };
+    }
+
+    const { data: tasks } = await ctx.supabase
+      .from("tasks")
+      .select("title, priority, due_at")
+      .is("completed_at", null)
+      .order("priority")
+      .order("due_at", { nullsFirst: false })
+      .limit(6);
+    if (!tasks?.length) {
+      return { result: "Nothing open to schedule — the task list is clear. Tell the user there's nothing to slot in." };
+    }
+
+    // 45-minute blocks, priority order. placeBlocks lays them into the free gaps.
+    const blocks = placeBlocks(windows, tasks.map((t) => ({ title: t.title, durationMin: 45 })), 0);
+    if (blocks.length === 0) {
+      return { result: `The free gaps before ${minToHHMM(endMin)} are too short to place a task block. Tell the user.` };
+    }
+
+    // Re-running must be safe: skip a block whose title is already on the calendar.
+    const existing = new Set(events.map((e) => e.summary.toLowerCase().trim()));
+    const toCreate = blocks.filter((b) => !existing.has(b.title.toLowerCase().trim()));
+    const settled = await Promise.allSettled(
+      toCreate.map((b) =>
+        createEvent(token, {
+          summary: b.title,
+          startISO: zonedTimeToUtc(today, minToHHMM(b.start), tz).toISOString(),
+          endISO: zonedTimeToUtc(today, minToHHMM(b.end), tz).toISOString(),
+          description: "Scheduled by Caffeinatd — re-plan",
+        }),
+      ),
+    );
+    const created = toCreate.filter((_, i) => settled[i]!.status === "fulfilled");
+    const summary = created.length
+      ? `Re-planned the rest of your day: ${created.map((b) => `${minToHHMM(b.start)}–${minToHHMM(b.end)} ${b.title}`).join("; ")}.`
+      : "Your open tasks are already blocked on the calendar — nothing new to add.";
+    return {
+      result: summary,
+      receipt: {
+        tool: "replan_today",
+        label: created.length ? `Re-planned ${created.length} block${created.length > 1 ? "s" : ""}` : "Re-plan: nothing to add",
+      },
+      // The schedule IS the answer — hand back a ready sentence, no extra hop.
+      finalText: summary,
     };
   },
 

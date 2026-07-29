@@ -133,6 +133,11 @@ export const toolSchemas = {
     date: z.string().optional().describe("YYYY-MM-DD, defaults to today"),
   }),
 
+  replan_today: z.object({
+    until: z.string().optional()
+      .describe("HH:MM 24h local time to plan up to (e.g. the day's end). Defaults to 22:00."),
+  }),
+
   get_fitness_report: z.object({
     exercise: z.string().optional().describe("Filter to one exercise, e.g. 'Bench Press'"),
   }),
@@ -251,6 +256,8 @@ const toolDescriptions: Record<ToolName, string> = {
     "Send the user a one-off message now or at a stated time that ISN'T a recurring reminder ('text me the gym summary after my workout'). Use sparingly — never send unprompted or repeatedly.",
   recommend_bedtime: "Compute tonight's recommended bedtime from tomorrow's calendar and sleep goal.",
   generate_daily_plan: "Generate (or regenerate) the structured daily plan for a date.",
+  replan_today:
+    "Reorganize the REMAINDER of today when the plan slipped (a meeting ran long, a workout was skipped, a deadline moved). Places the top open tasks into the real free gaps between now and the day's end, deterministically — you only relay what it scheduled. Use this for 're-plan my afternoon' / 'my day got derailed, fix it'.",
   get_fitness_report:
     "Read-only fitness digest: recovery by muscle group, strength progression (estimated 1RM trend) per exercise, training consistency, and active strength goal progress. Call this before answering any question about training, progress, recovery, or plateaus — never guess these numbers.",
   log_expense:

@@ -6,6 +6,7 @@ import { getAccessToken } from "@/lib/google/oauth";
 import { createEvent, listEvents } from "@/lib/google/calendar";
 import { endOfDayISO, formatTime, localDateStr, startOfDayISO, zonedTimeToUtc } from "@/lib/utils";
 import { recommendSleep } from "./sleep";
+import { busyIntervals, freeWindows, hhmmToMin, minToHHMM, placeBlocks } from "./place-blocks";
 import { syncIfStale } from "@/lib/integrations/hevy";
 import { fetchSetRows } from "@/lib/fitness/refresh";
 import { computeMuscleRecovery } from "@/lib/fitness/recovery";
@@ -26,12 +27,20 @@ const planSchema = z.object({
   priorities: z.array(z.string()).max(5),
   workout: z.string(),
   nutrition: z.string(),
-  freeWindows: z.array(z.string()),
   home: z.string().default(""), // default keeps plans stored before the Home pillar parseable
-  // Time-blocked schedule for the free windows — this is what gets
-  // materialized onto Google Calendar. Default keeps older stored plans valid.
+  // freeWindows and schedule are NO LONGER asked of the model — they're computed
+  // deterministically from the real calendar by place-blocks.ts (see below), so
+  // "placed inside real free windows" is math, not a hopeful LLM guess. Kept in
+  // the schema with defaults so older stored plans (which had them) still parse.
+  freeWindows: z.array(z.string()).default([]),
   schedule: z.array(timeBlockSchema).max(6).default([]),
 });
+
+// The waking window blocks are placed within, when the user has no explicit
+// wake/bed times driving it. Local minutes-from-midnight.
+const DAY_START_MIN = 8 * 60;
+const DAY_END_MIN = 22 * 60;
+const BLOCK_MIN = 45;
 
 export interface GeneratedPlan {
   plan: DailyPlan;
@@ -169,18 +178,44 @@ export async function generateDailyPlan(
           "priorities: string[] (top 5 max, drawn from tasks, calendar, AND household duties — e.g. 'Take recycling out tonight' belongs alongside meetings), " +
           "workout: string (one concrete suggestion respecting recent training and rest), " +
           "nutrition: string (one concrete suggestion toward the goals), " +
-          "freeWindows: string[] (gaps between events, e.g. '14:00–16:30'), " +
-          "home: string (one line on today's household picture: chores, collections, shopping — or '' if none), " +
-          "schedule: [{start:'HH:MM', end:'HH:MM', title: string}] (max 5 time blocks placing the priorities and the workout INSIDE the free windows — 24h local times, never overlapping existing calendar events, [] if the day is already full) }. No markdown fences.",
+          "home: string (one line on today's household picture: chores, collections, shopping — or '' if none) }. " +
+          "Do NOT include time blocks or free windows — those are computed separately. No markdown fences.",
       },
       { role: "user", content: context },
     ],
   });
 
   const parsed = parsePlanJSON(text);
+
+  // ── Deterministic time-blocking (shared with the replan_today tool) ──────
+  // The model gave us the priorities; place-blocks.ts positions them in the
+  // real free gaps. For today we never place anything before the current time.
+  const isToday = planDate === localDateStr(tz);
+  const nowMin = isToday ? hhmmToMin(formatTime24(new Date().toISOString(), tz)) : DAY_START_MIN;
+  const windows = freeWindows(
+    busyIntervals(events, tz, planDate),
+    DAY_START_MIN,
+    DAY_END_MIN,
+    Math.max(DAY_START_MIN, nowMin),
+    30,
+  );
+  const placed = placeBlocks(
+    windows,
+    parsed.priorities.slice(0, 5).map((title) => ({ title, durationMin: BLOCK_MIN })),
+    0,
+  );
+  const computedFreeWindows = windows.map((w) => `${minToHHMM(w.start)}–${minToHHMM(w.end)}`);
+  const computedSchedule = placed.map((b) => ({
+    start: minToHHMM(b.start),
+    end: minToHHMM(b.end),
+    title: b.title,
+  }));
+
   const plan: DailyPlan = {
     date: planDate,
     ...parsed,
+    freeWindows: computedFreeWindows,
+    schedule: computedSchedule,
     bedtime: `${sleep.bedtime} (wind down ${sleep.windDownStart}, wake ${sleep.wake}) — ${sleep.rationale}`,
   };
 
@@ -196,18 +231,13 @@ export async function generateDailyPlan(
   if (materialize) {
     // ── Time blocks → real Google Calendar events (created in parallel) ──
     if (accessToken) {
-      const nowLocal = new Date().toLocaleTimeString("en-GB", {
-        timeZone: tz, hour: "2-digit", minute: "2-digit",
-      });
+      // computedSchedule already excludes past-now slots and any overlap with a
+      // real event (the free-window math guaranteed it), so the only remaining
+      // guard is not duplicating a title already on the calendar.
       const existingTitles = new Set(events.map((e) => e.summary.toLowerCase().trim()));
-      const blocks = parsed.schedule.filter((block) => {
-        if (block.end <= block.start) return false;
-        // Skip blocks already behind us (when planning today mid-day) and
-        // blocks whose title already exists on today's calendar (re-planning
-        // the same day must not duplicate).
-        if (planDate === localDateStr(tz) && block.start < nowLocal) return false;
-        return !existingTitles.has(block.title.toLowerCase().trim());
-      });
+      const blocks = computedSchedule.filter(
+        (block) => !existingTitles.has(block.title.toLowerCase().trim()),
+      );
       const settled = await Promise.allSettled(
         blocks.map((block) =>
           createEvent(accessToken, {

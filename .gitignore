@@ -5,12 +5,12 @@ node_modules/
 .next/
 out/
 
-# Environment files — never commit secrets (.env.example is the template)
-.env
-.env.local
-.env*.local
-.env.development
-.env.production
+# Environment files — never commit secrets.
+# Ignore EVERY .env variant, then re-allow only the template. A narrow list
+# missed .env.backup-provider once and GitHub push protection caught it; this
+# pattern makes that class of mistake impossible.
+.env*
+!.env.example
 
 # Vercel
 .vercel
