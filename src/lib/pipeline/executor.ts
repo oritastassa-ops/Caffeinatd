@@ -41,6 +41,14 @@ export interface ExecContext {
   supabase: SupabaseClient;
   provider: AIProvider;
   profile: Profile;
+  /**
+   * When set, the tool call must name one of these tools or it is refused. This
+   * is the security boundary for lower-trust callers (inbound SMS/email replies)
+   * — filtering the tools we OFFER the model is only UX; a spoof-resistant model
+   * still must not be trusted to self-limit, so the executor enforces it too.
+   * Absent (the web app) means the full catalog.
+   */
+  allowedTools?: ReadonlySet<ToolName>;
 }
 
 export interface ExecOutcome {
@@ -65,6 +73,15 @@ export interface ExecOutcome {
 export async function executeToolCall(ctx: ExecContext, call: ToolCall): Promise<ExecOutcome> {
   const schema = toolSchemas[call.name as ToolName];
   if (!schema) return { result: `Error: unknown tool "${call.name}"` };
+
+  // Enforce the caller's allow-list here, at the boundary — not just by omitting
+  // the tool from the prompt. A legible refusal so the model tells the user
+  // plainly instead of retrying or claiming success.
+  if (ctx.allowedTools && !ctx.allowedTools.has(call.name as ToolName)) {
+    return {
+      result: `Error: the "${call.name}" action isn't available by text or email — it can only be done in the app. Tell the user that.`,
+    };
+  }
 
   const parsed = schema.safeParse(call.arguments);
   if (!parsed.success) {

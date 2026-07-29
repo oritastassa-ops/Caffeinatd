@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceClient } from "@/lib/supabase/server";
+import { scopedClient } from "@/lib/supabase/scoped";
 import { getProvider } from "@/lib/ai";
 import { generateDailyPlan } from "@/lib/planning/daily";
 import { enqueueNotification } from "@/lib/notifications/enqueue";
@@ -82,45 +83,4 @@ export async function GET(req: NextRequest) {
     }
   }
   return NextResponse.json({ results });
-}
-
-/**
- * Wraps the service client so every from() query is filtered to one user,
- * mirroring what RLS does for session clients. Only the tables the planner
- * reads/writes are user-scoped; the pass-through covers rpc etc.
- */
-function scopedClient(base: ReturnType<typeof getServiceClient>, userId: string) {
-  const USER_TABLES = new Set([
-    "tasks",
-    "workouts",
-    "meals",
-    "daily_plans",
-    "google_tokens",
-    "memories",
-    "insights",
-    "reminders",
-    "fitness_integrations",
-    "fitness_metrics",
-    "fitness_events",
-    "finance_accounts",
-    "finance_transactions",
-    "finance_goals",
-    "finance_snapshots",
-    "finance_reviews",
-  ]);
-  return new Proxy(base, {
-    get(target, prop, receiver) {
-      if (prop === "from") {
-        return (table: string) => {
-          const builder = target.from(table);
-          if (!USER_TABLES.has(table)) return builder;
-          const originalSelect = builder.select.bind(builder);
-          builder.select = ((...args: Parameters<typeof originalSelect>) =>
-            originalSelect(...args).eq("user_id", userId)) as typeof builder.select;
-          return builder;
-        };
-      }
-      return Reflect.get(target, prop, receiver);
-    },
-  }) as ReturnType<typeof getServiceClient>;
 }

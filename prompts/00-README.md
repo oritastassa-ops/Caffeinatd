@@ -82,6 +82,40 @@ Each opens with a design question I deliberately left open (generic vs. per-metr
 food API; client-side vs. server-side parsing). Expect Claude Code to argue a position before
 implementing, and read that argument.
 
+## Maintenance
+
+| Phase | Prompt | Ships |
+|---|---|---|
+| 9 | `09-commit-and-push.md` | Security audit, split loose work into logical commits, push |
+| 10 | `10-operational-polish.md` | Vercel cron plan limit, current model defaults, reachability surfacing, deferred onboarding touches |
+
+Phase 10 pays down the deferred items named in the self-critique of
+`docs/14-notifications-architecture.md`. Run it before deploying — Part A is a deploy blocker on
+Vercel Hobby, not a nice-to-have.
+
+## UI overhaul (Phases 11–13)
+
+Run in order — 11 is a hard prerequisite. The app has four shared UI primitives and no spacing,
+radius, elevation, or motion scale, so every page hand-rolls its own. Polishing pages before
+fixing that just produces more variations of the same drift.
+
+| Phase | Prompt | Ships |
+|---|---|---|
+| 11 | `11-design-system.md` | Token scales, real primitive set, three reference pages |
+| 12 | `12-calendar.md` | Week grid with time axis, overlap layout, day/agenda views, event creation |
+| 13 | `13-surface-migration.md` | The remaining sixteen pages, Today broken up, density and states pass |
+
+Phase 13 is likely two sessions; the prompt asks Claude Code to propose the split.
+
+## Two-way (Phase 14)
+
+| Phase | Prompt | Ships |
+|---|---|---|
+| 14 | `14-inbound-replies.md` | Replying to a notification runs through the assistant |
+
+Requires the notification pillar to be configured and actually delivering. Do not start this
+before one real message has gone out and come back — the whole phase is about the return trip.
+
 ## After Phase 5
 
 Natural follow-ons, in rough priority order: web push (free, no vendor, already on the

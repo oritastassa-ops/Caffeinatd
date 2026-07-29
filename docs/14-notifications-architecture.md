@@ -498,3 +498,136 @@ so, so the coupling is visible.
    bad payload can't strand the other 49 in a batch — but it also means a systematically broken
    template (shipped with a bug) fails every affected delivery silently until someone reads the
    `failed` rows. Phase 5's delivery-log surface is what makes that visible.
+
+---
+
+# Phase 14: inbound replies (SMS shipped; email is the follow-up)
+
+Every phase above talks *at* the user: the plan goes out, the reminder fires, and to act on it you
+open a laptop. Phase 14 closes the loop — replying *"add milk to my list"* or *"move gym to 6"* by
+text runs through the same assistant the ⌘K palette uses and answers with a receipt. This is the
+phase that changes the product's category, and it is almost entirely **plumbing between components
+that already exist** (`src/lib/notifications/inbound.ts`): the signature-validated webhook (Phase 3),
+the Zod tool catalog, `runAssistant`, undoable receipts, memory recall, and the outbound channels to
+reply on. The only genuinely new thing is a trust boundary, because this is the first surface where
+something *outside* the app can cause a write.
+
+**Scope of this session: SMS + the channel-agnostic pipeline.** Email inbound (Resend inbound-route
+signature verification, MX/verified-domain setup, and quoted-history stripping across Gmail/Apple
+Mail/Outlook) is a self-contained follow-up that calls the same `processInbound` — deliberately split
+out because each of those three is its own risk area, and bundling them with the auth core is the
+rush `CLAUDE.md` warns against.
+
+## The trust model: a sender address is a claim, not a credential
+
+Caller ID is trivially spoofed and an email `From` is trivially forged, so **the sender field in a
+webhook body authenticates nothing.** Building "match the sender against a contact, then execute tool
+calls as that user" without more would be an unauthenticated remote-execution path into someone's
+calendar, tasks, and finances. Four controls, in the order they run
+(`processInbound`, `src/lib/notifications/inbound.ts`):
+
+1. **Signature first, before parsing a byte.** The Twilio HMAC (`twilio-signature.ts`, constant-time)
+   is validated in the route; only a verified body reaches the pipeline. Resend inbound will get its
+   own signature check to the same standard in the follow-up.
+2. **Dedupe = the audit-row insert.** The first thing `processInbound` does is insert an
+   `inbound_messages` row; the unique `(channel, provider_message_id)` index makes a webhook retry
+   (they are at-least-once) collide and drop atomically — the same DB-enforced idempotency the
+   delivery queue uses. *Every* inbound message gets a row, including every rejection, because a
+   silent drop you can't investigate is the fake-success trap `docs/12` warns about.
+3. **Resolve only via a verified contact, and refuse ambiguity.** The sender resolves to a user only
+   through a `notification_contacts` row that is `verified_at` and not opted out. Unknown or
+   unverified → dropped, audited, no reply. And critically: **an address that resolves to more than
+   one user is refused, not guessed** — a shared household email or a recycled phone number maps to
+   ≥2 verified contacts, and picking one would run writes as the wrong human. Ambiguous identity is
+   treated exactly like an unknown sender.
+4. **The reply goes to the stored verified address, never the webhook `From`.** Even past resolution,
+   replying to the raw sender field would let a spoofer redirect the answer; we reply to the address
+   on the resolved contact.
+
+One more that isn't authentication but belongs to the same trust story: the assistant runs on a
+**per-user scope over the service client** (`src/lib/supabase/scoped.ts`, the same Proxy the
+daily-plan cron has used since Phase 4), so every read is filtered to the resolved user the way RLS
+would for a session client. This is why `ai_conversations` had to join the scoped-table set —
+`recordExchange` selects the most recent conversation *without* a user filter, which under an
+unscoped service client would thread a text reply into a stranger's history.
+
+## The tool-scope decision: one conservative allow-list, both channels
+
+Inbound is a lower-trust channel than the web app, so its action surface is strictly smaller —
+expressed **once**, as a typed `Set<ToolName>` in `src/lib/notifications/inbound-scope.ts`, derived
+from the catalog (names can't drift) and enforced in **two** places: the tool list *offered* to the
+model is narrowed (UX), and `executeToolCall` *refuses* an out-of-scope call with a legible error
+(the security boundary — a model must never be trusted to self-limit).
+
+- **Opt-in, not opt-out.** A new capability added to `tools.ts` is *not* reachable from a spoofable
+  channel until someone adds it here on purpose. An opt-out list would silently widen the blast
+  radius every time the assistant gained a tool.
+- **The same set for both channels.** The tempting asymmetry — "email crosses SPF/DKIM, so trust it
+  more" — doesn't hold: those authenticate the sending *server*, not the *human*, and say nothing
+  about a compromised mailbox or a forwarded thread. The identity proof is the `verified_at` match in
+  both cases, the same strength for each, so email earns no wider surface than SMS.
+- **The line: reversible-or-read-only in, irreversible-or-third-party-fanning out.** Every mutating
+  tool already returns an undoable receipt, so the only actions worth withholding are the ones a
+  receipt can't take back. Excluded: **`delete_event`** (irreversible, and it emails a cancellation
+  to other attendees — a spoofed "cancel my 3pm" is the exact abuse) and **`suggest_memory`** (needs
+  an interactive Remember/Don't-remember surface a text thread doesn't have). Everything else,
+  including `update_event` — "move gym to 6" is the feature's whole point — stays in. Once you
+  subtract everything reversible, the entire "full catalog vs safe subset" debate collapses to a
+  single question, *"should a reply be able to delete a calendar event?"*, and the answer is no. The
+  confirmation-flow option ("reply yes within N minutes") was rejected because a yes/no round-trip is
+  a held multi-turn session, which is explicitly out of scope.
+
+## Loops and cost
+
+An auto-reply that triggers an auto-reply is a billing incident and a spam complaint, so the guards
+sit **in front of the AI call** (the expensive part):
+
+- **Never answer a machine.** `isAutomatedSender` drops mail carrying `Auto-Submitted` (≠ `no`),
+  `Precedence: bulk|list|junk`, or `List-Id`/`List-Unsubscribe`. (SMS never sets these; the guard is
+  there for the email follow-up and is unit-tested now.)
+- **Rate-limit per contact** — `MAX_PER_MINUTE = 4`, `MAX_PER_HOUR = 20`, counted from the
+  `inbound_messages` audit rows and checked *before* `runAssistant`. Tests assert the assistant mock
+  is never invoked on this path.
+- **A reply counts against spend.** The outbound reply is logged as a `notification_deliveries` row
+  and increments `notification_spend` for SMS — a reply is a message like any other.
+- **One `runAssistant` call**, existing hop/time budgets, no fan-out.
+
+The webhook returns `200` immediately and the assistant runs in `after()`, because the reason/act
+loop is far slower than Twilio's webhook timeout — a synchronous run would time the webhook out and
+trigger a retry. The immediate `200` avoids the retry; the dedupe index backstops it regardless.
+
+## Threading and its honest failure mode
+
+A reply usually means something only in the context of the message it answers ("move gym to 6" needs
+this morning's plan). Email gives an `In-Reply-To`; **SMS gives nothing**, so both fall back to *"the
+most recent `sent` delivery to this contact within `THREAD_WINDOW_HOURS` (12h)"* and the summarized
+payload is prepended to the user's reply as context. This heuristic **will sometimes attach the wrong
+context** — a reply to yesterday's plan sent after a fresh plan went out this morning will thread to
+the new one. That is an accepted, documented wrong-sometimes, not a silent bug: the assistant still
+runs, the receipt still tells the truth about what it did, and the audit row records exactly which
+delivery it threaded to (`in_reply_to_delivery_id`). The email `In-Reply-To` path is scaffolded but
+imperfect until the follow-up — Resend's `provider_message_id` isn't guaranteed to equal the `Message-ID`
+the client references, so the recency fallback is the reliable one today.
+
+## Self-critique
+
+0. *The reply runs in `after()`, so a crash between the assistant's write and the reply send is a
+   completed action with no confirmation.* The write is real (and undoable in-app), but the user
+   never hears back — the one outcome the phase set out to avoid. The audit row lands as `failed`, so
+   it's investigable, but there's no automatic retry of just the reply. A durable outbox for the
+   reply (enqueue it like any other delivery instead of sending inline) would close this; it was
+   deferred because inline send is what lets us fold tool `failures` into the reply text and answer
+   in one turn.
+1. *The threading heuristic is the weakest correctness point*, covered above — wrong-sometimes by
+   construction. The mitigation is honesty (the receipt and the audit row), not accuracy.
+2. *Verification proves opt-in at a point in time, not continuous ownership.* A recycled phone number
+   or a handed-off mailbox stays a `verified_at` contact until someone notices; the ambiguity refusal
+   only catches the case where *two* users hold it at once, not where one silently replaced another.
+   This is inherent to phone/email as identity and can't be fully closed app-side; periodic
+   re-verification is the real fix if it ever matters.
+3. *Rate limits are per contact, not global per user.* A user with two verified numbers has twice the
+   budget. At personal scale this is noise; a per-user aggregate is the drop-in if it isn't.
+4. *A reply isn't gated on the SMS spend cap the way an outbound reminder is* — it counts toward the
+   cap but isn't refused by it, on the reasoning that the per-contact rate limit is the real cost
+   guard and refusing to answer a paying user mid-conversation is worse UX than the marginal spend.
+   Stated here so the asymmetry with `enqueueNotification` is a decision, not an oversight.

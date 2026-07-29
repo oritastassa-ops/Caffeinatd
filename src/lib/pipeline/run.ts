@@ -4,8 +4,18 @@ import { ActionFailure, ActionReceipt, AssistantResponse, Profile } from "@/lib/
 import { recallMemories } from "@/lib/memory";
 import { reachableChannels } from "@/lib/notifications/settings-data";
 import { DEFAULT_PERSONALITY, PERSONALITIES } from "@/lib/personalities";
-import { getToolDefs } from "./tools";
+import { getToolDefs, ToolName } from "./tools";
 import { executeToolCall } from "./executor";
+
+export interface RunOptions {
+  /**
+   * Restrict the assistant to a subset of the catalog. Lower-trust callers
+   * (inbound SMS/email) pass an allow-list; it both narrows the tools offered to
+   * the model AND is enforced in the executor. Omitted (the web app) = full
+   * catalog. See src/lib/notifications/inbound-scope.ts.
+   */
+  allowedTools?: ReadonlySet<ToolName>;
+}
 
 const MAX_HOPS = 5;
 /**
@@ -28,6 +38,7 @@ export async function runAssistant(
   provider: AIProvider,
   profile: Profile,
   userMessage: string,
+  options: RunOptions = {},
 ): Promise<AssistantResponse> {
   const memories = await recallMemories(supabase, provider, profile.id, userMessage);
   // Which channels can actually reach this user right now — so the assistant
@@ -76,7 +87,8 @@ export async function runAssistant(
     { role: "system", content: system },
     { role: "user", content: userMessage },
   ];
-  const tools = getToolDefs();
+  const { allowedTools } = options;
+  const tools = getToolDefs().filter((t) => !allowedTools || allowedTools.has(t.name as ToolName));
   const actions: ActionReceipt[] = [];
   // Failures are tracked deterministically here — the UI renders them as red
   // chips regardless of how the model chooses to phrase its reply, so a failed
@@ -118,7 +130,7 @@ export async function runAssistant(
         });
         continue;
       }
-      const outcome = await executeToolCall({ supabase, provider, profile }, call);
+      const outcome = await executeToolCall({ supabase, provider, profile, allowedTools }, call);
       if (outcome.receipt) actions.push(outcome.receipt);
       if (outcome.result.startsWith("Error:")) {
         hopFailed = true;

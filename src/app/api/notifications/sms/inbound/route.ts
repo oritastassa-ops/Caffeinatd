@@ -1,15 +1,22 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getServiceClient } from "@/lib/supabase/server";
+import { getProvider } from "@/lib/ai";
+import { getChannel } from "@/lib/notifications/registry";
+import { processInbound } from "@/lib/notifications/inbound";
 import { validateTwilioSignature } from "@/lib/notifications/twilio-signature";
 
 /**
- * Twilio webhook: status callbacks (delivery receipts) and inbound messages
- * (STOP/START/HELP compliance keywords). Service-role client, because there is
- * no session — but every mutation is keyed off the phone NUMBER in a
- * signature-verified body, never a user id from the request. Conversational
- * inbound ("text your assistant back") is explicitly out of scope; see the
- * extension point below.
+ * Twilio webhook: status callbacks (delivery receipts), STOP/START/HELP
+ * compliance keywords, and — since Phase 14 — conversational replies routed
+ * through the assistant. Service-role client, because there is no session; but
+ * every mutation is keyed off the phone NUMBER in a signature-verified body,
+ * never a user id from the request, and the assistant runs scoped to the one
+ * user that number's VERIFIED contact resolves to (see lib/notifications/inbound).
  */
+
+// The assistant reply runs in after() (below), so it can take longer than
+// Twilio's webhook timeout. Requires Vercel fluid compute for >60s.
+export const maxDuration = 300;
 
 const LOG_PREFIX = "[notifications:sms:inbound]";
 
@@ -55,11 +62,12 @@ export async function POST(req: NextRequest) {
     return new NextResponse(null, { status: 204 });
   }
 
-  // Inbound message — STOP/START/HELP keyword mirroring.
+  // Inbound message — STOP/START/HELP keyword mirroring, else the assistant.
   const body = params.Body;
   const from = params.From;
-  if (body && from) {
-    await handleInbound(supabase, from, body);
+  const messageSid = params.MessageSid ?? params.SmsSid;
+  if (body && from && messageSid) {
+    await handleInbound(supabase, from, body, messageSid);
     return twiml();
   }
 
@@ -88,9 +96,12 @@ async function handleInbound(
   supabase: ReturnType<typeof getServiceClient>,
   from: string,
   body: string,
+  messageSid: string,
 ): Promise<void> {
   const keyword = body.trim().split(/\s+/)[0]?.toUpperCase() ?? "";
 
+  // Compliance keywords are law and come FIRST — a STOP is never a prompt, and
+  // must never reach the assistant. These mirror Twilio's own opt-out state.
   if (STOP_WORDS.has(keyword)) {
     return mirrorOptOut(supabase, from, new Date().toISOString());
   }
@@ -102,10 +113,20 @@ async function handleInbound(
     return;
   }
 
-  // EXTENSION POINT: conversational inbound ("reply to your assistant by text")
-  // is out of scope for Phase 3. A future phase routes non-keyword inbound into
-  // the assistant pipeline here. Deliberately a no-op — not faked.
-  console.info(`${LOG_PREFIX} ignored non-keyword inbound from a contact`);
+  // Conversational reply → the assistant. Run in after() so the webhook returns
+  // immediately (Twilio won't retry a fast 200) while the reason/act loop and
+  // the SMS reply happen out of band. Dedupe on MessageSid backstops the retry
+  // race regardless. processInbound self-audits every outcome to inbound_messages.
+  after(async () => {
+    try {
+      await processInbound(
+        { supabase, provider: getProvider(), getChannel },
+        { channel: "sms", providerMessageId: messageSid, from, body },
+      );
+    } catch (err) {
+      console.error(`${LOG_PREFIX} pipeline error: ${err instanceof Error ? err.message : err}`);
+    }
+  });
 }
 
 /** Mirror Twilio's opt-out state onto every contact holding this number. */
